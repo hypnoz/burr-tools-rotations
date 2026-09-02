@@ -161,6 +161,7 @@ configuration_c::configuration_c(void) {
              "Reverse the direction of the preview zoom when the mouse wheel is used.",
              "true");
   CNF_BOOL("rubberband",          &i_use_rubberband, "false");
+  CNF_INT("renderstyle",          &i_render_style, "0");
   CNF_INT("windowposx",           &i_window_pos_x, "30");
   CNF_INT("windowposy",           &i_window_pos_y, "30");
   CNF_INT("windowposw",           &i_window_pos_w, "800");

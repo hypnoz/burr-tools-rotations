@@ -11,6 +11,9 @@
  */
 #include "statusline.h"
 
+#include "buttongroup.h"
+#include "configuration.h"
+
 LStatusLine::LStatusLine(int x, int y, int w, int h) : layouter_c(x, y, w, h), colorModeIndex(0) {
 
   weight(1, 0);
@@ -22,6 +25,28 @@ LStatusLine::LStatusLine(int x, int y, int w, int h) : layouter_c(x, y, w, h), c
   text->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
   text->weight(1, 0);
   text->pitch(4);
+
+  Fl_Button * b;
+
+  rstyle = new ButtonGroup_c(1, 0, 1, 1);
+
+  b = rstyle->addButton();
+  b->image(pm.get(RenderModeVoxel_xpm));
+  b->tooltip(" Draw each voxel separately ");
+
+  b = rstyle->addButton();
+  b->image(pm.get(RenderModeEdges_xpm));
+  b->tooltip(" Draw flat faces with lines at the real edges ");
+
+  b = rstyle->addButton();
+  b->image(pm.get(RenderModeSTL_xpm));
+  b->tooltip(" Draw pieces like the STL export produces them ");
+
+  rstyle->select(config.renderStyle());
+
+#ifdef __APPLE__
+  (new LFl_Box(0, 2, 0, 1, 1))->setMinimumSize(20, 0);
+#endif
 
   clear_visible_focus();
 
@@ -46,4 +71,18 @@ voxelFrame_c::colorMode LStatusLine::getColorMode(void) const {
     case 3: return voxelFrame_c::anaglyphColorL;
     default: return voxelFrame_c::pieceColor;
   }
+}
+
+voxelFrame_c::renderStyle LStatusLine::getRenderStyle(void) const {
+
+  switch (rstyle->getSelected()) {
+    case 0: return voxelFrame_c::styleVoxel;
+    case 1: return voxelFrame_c::styleEdges;
+    case 2: return voxelFrame_c::styleSTL;
+    default: return voxelFrame_c::styleVoxel;
+  }
+}
+
+void LStatusLine::callback(Fl_Callback* fkt, void * dat) {
+  rstyle->callback(fkt, dat);
 }

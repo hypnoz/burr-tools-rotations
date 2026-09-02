@@ -55,6 +55,9 @@ public:
   bool debugRotations(void) { return i_debugRotations; }
   bool debugStatistics(void) { return i_debugStatistics; }
 
+  int renderStyle(void) { return i_render_style; }
+  void renderStyle(int val) { i_render_style = val; }
+
   int windowPosX(void) { return i_window_pos_x; }
   int windowPosY(void) { return i_window_pos_y; }
   int windowPosW(void) { return i_window_pos_w; }
@@ -104,6 +107,7 @@ private:
   bool i_reverseScrollZoom;
   bool i_debugRotations;
   bool i_debugStatistics;
+  int i_render_style;
 
   int i_window_pos_x;
   int i_window_pos_y;
