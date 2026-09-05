@@ -37,6 +37,7 @@
 #include "../halfedge/polyhedron.h"
 
 #include <math.h>
+#include <vector>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -1785,6 +1786,9 @@ void voxelFrame_c::updatePositionsOverlap(piecePositions_c *shifting) {
   voxel_c * inter = const_cast<voxel_c*>(shapes.rbegin()->shape);
   inter->setAll(voxel_c::VX_EMPTY);
 
+  /* heap allocated rather than on the stack because shapes.size() has no
+   * upper bound
+   */
   std::vector<char> involved(shapes.size(), 0);
 
   /* intersect each with everybody */

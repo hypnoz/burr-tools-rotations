@@ -30,6 +30,9 @@
 #include "../tools/xml.h"
 
 #include <cstdlib>
+#include <cstring>
+#include <unordered_map>
+#include <vector>
 
 #ifdef _WIN32
 #define snprintf _snprintf
@@ -1041,8 +1044,8 @@ assembly_c * assembler_1_c::getAssembly(void) {
 
   assembly_c * assembly = new assembly_c(problem.getPuzzle().getGridType());
 
-  /* fill the array with 0xff, so that we can distinguish between
-   * placed and unplaced pieces
+  /* the placement of each selected row; heap allocated rather than on the
+   * stack because rows.size() grows with the puzzle and has no upper bound
    */
   std::vector<unsigned int> piece(rows.size());
   std::vector<unsigned char> tran(rows.size());
