@@ -58,6 +58,8 @@ public:
   int renderStyle(void) { return i_render_style; }
   void renderStyle(int val) { i_render_style = val; }
 
+  bool reverseScrollZoom(void) { return i_reverseScrollZoom; }
+
   int windowPosX(void) { return i_window_pos_x; }
   int windowPosY(void) { return i_window_pos_y; }
   int windowPosW(void) { return i_window_pos_w; }
@@ -108,6 +110,7 @@ private:
   bool i_debugRotations;
   bool i_debugStatistics;
   int i_render_style;
+  bool i_reverseScrollZoom;
 
   int i_window_pos_x;
   int i_window_pos_y;

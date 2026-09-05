@@ -363,7 +363,7 @@ void configuration_c::dialog(void) {
         if (((Fl_Check_Button*)t->widget)->value())
           *((bool*)t->cnf_var) = true;
         else
-          *((bool*)t->cnf_var) = false;;
+          *((bool*)t->cnf_var) = false;
         break;
       case CT_STRING:
         break;

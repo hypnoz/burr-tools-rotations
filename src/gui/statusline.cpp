@@ -11,6 +11,7 @@
  */
 #include "statusline.h"
 
+#include "Images.h"
 #include "buttongroup.h"
 #include "configuration.h"
 
