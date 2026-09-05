@@ -71,7 +71,11 @@ jobs:
             build-essential ccache cmake ninja-build meson pkg-config git python3 \
             libgl-dev libglu1-mesa-dev libpng-dev zlib1g-dev \
             libx11-dev libxext-dev libxft-dev libxinerama-dev \
-            libxcursor-dev libxrender-dev libfontconfig1-dev
+            libxcursor-dev libxrender-dev libfontconfig1-dev \
+            cppcheck
+
+      - name: Install just
+        uses: extractions/setup-just@v2
 
       - name: Build and package
         env:
@@ -80,6 +84,12 @@ jobs:
         run: |
           ./build_scripts/build-linux.sh --skip-dep-install --buildtype release
           ccache -s || true
+
+      - name: Run tests
+        run: just test
+
+      - name: Run static analysis
+        run: just check
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -162,6 +172,9 @@ jobs:
             meson-macos-${{ hashFiles('subprojects/*.wrap') }}-
             meson-macos-
 
+      - name: Install just
+        uses: extractions/setup-just@v2
+
       - name: Build
         env:
           CC: ccache clang
@@ -172,6 +185,9 @@ jobs:
           ./build_scripts/build-macos.sh --skip-dep-install --buildtype release
           strip -x build/burrtools build/burrTxt build/burrTxt2
           ccache -s || true
+
+      - name: Run tests
+        run: just test
 
       - name: Create macOS app bundle and DMG
         env:
