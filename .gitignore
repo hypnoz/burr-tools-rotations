@@ -7,6 +7,7 @@ src/gui/burrGui
 src/help/helpviewer
 src/unitTest
 build/
+build-*/
 GPATH
 GRTAGS
 GTAGS

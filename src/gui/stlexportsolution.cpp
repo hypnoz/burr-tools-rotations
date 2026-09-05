@@ -98,6 +98,7 @@ namespace stlExportSolutionImpl {
       const problem_c * pr, unsigned int sol)
   {
     std::map<unsigned int, unsigned int> counts;
+    if (!pr) return counts;
     const solution_c * sav = pr->getSavedSolution(sol);
     if (!sav) return counts;
     const assembly_c * assm = sav->getAssembly();
