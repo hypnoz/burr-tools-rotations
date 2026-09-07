@@ -1577,7 +1577,7 @@ void mainWindow_c::cb_New(void) {
     if (fname) {
       delete [] fname;
       fname = 0;
-      label("BurrTools - unknown");
+      copy_label("BurrTools - unknown");
     }
 
     changed = false;
@@ -1652,9 +1652,7 @@ void mainWindow_c::cb_Load_Ps3d(void) {
       fname = new char[strlen(f)+1];
       strcpy(fname, f);
 
-      char nm[300];
-      snprintf(nm, 299, "BurrTools - %s", fname);
-      label(nm);
+      copy_label((std::string("BurrTools - ") + fname).c_str());
 
       ReplacePuzzle(newPuzzle);
 
@@ -1694,9 +1692,7 @@ void mainWindow_c::cb_Load_Scad(void) {
       fname = new char[strlen(f)+1];
       strcpy(fname, f);
 
-      char nm[300];
-      snprintf(nm, 299, "BurrTools - %s", fname);
-      label(nm);
+      copy_label((std::string("BurrTools - ") + fname).c_str());
 
       ReplacePuzzle(newPuzzle);
 
@@ -1895,7 +1891,7 @@ void mainWindow_c::cb_SaveAs(void) {
 
       if (!fileExists(f) || fl_choice("File exists; overwrite?", "Cancel", "Overwrite", 0)) {
 
-        char f2[1000];
+        std::string f2;
 
         size_t flen = strlen(f);
         const char ext[] = ".xmpuzzle";
@@ -1903,12 +1899,12 @@ void mainWindow_c::cb_SaveAs(void) {
 
         // check if the filename ends with ".xmpuzzle"
         if (flen < extlen || strcmp(f + flen - extlen, ext) != 0) {
-          snprintf(f2, 1000, "%s.xmpuzzle", f);
+          f2 = std::string(f) + ext;
         } else {
-          snprintf(f2, 1000, "%s", f);
+          f2 = f;
         }
 
-        ogzstream ostr(f2);
+        ogzstream ostr(f2.c_str());
 
         if (ostr)
         {
@@ -1925,12 +1921,10 @@ void mainWindow_c::cb_SaveAs(void) {
         }
 
         if (fname) delete [] fname;
-        fname = new char[strlen(f2)+1];
-        strcpy(fname, f2);
+        fname = new char[f2.length()+1];
+        strcpy(fname, f2.c_str());
 
-        char nm[300];
-        snprintf(nm, 299, "BurrTools - %s", fname);
-        label(nm);
+        copy_label((std::string("BurrTools - ") + fname).c_str());
 
       } else {
 
@@ -2766,9 +2760,7 @@ bool mainWindow_c::tryToLoad(const char * f) {
   fname = new char[strlen(f)+1];
   strcpy(fname, f);
 
-  char nm[300];
-  snprintf(nm, 299, "BurrTools - %s", fname);
-  label(nm);
+  copy_label((std::string("BurrTools - ") + fname).c_str());
 
   ReplacePuzzle(newPuzzle);
 
@@ -5127,7 +5119,7 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   BtnUndo = 0;
   BtnRedo = 0;
 
-  label("BurrTools - unknown");
+  copy_label("BurrTools - unknown");
   user_data((void*)(this));
 
   /* original comment dialog is 400x200; its text box is the window

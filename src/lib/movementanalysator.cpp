@@ -194,6 +194,7 @@ bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int ne
    */
   for (int i = 0; i < next_pn; i++) {
     movement[i] = 0;
+    check[i] = false;
   }
   movement[nextpiece] = nextstep;
   check[nextpiece] = true;
