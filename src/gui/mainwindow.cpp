@@ -2853,7 +2853,7 @@ void mainWindow_c::ReplacePuzzle(puzzle_c * NewPuzzle) {
 }
 
 Fl_Menu_Item mainWindow_c::menu_MainMenu[] = {
-  { "&File",           0, 0, 0, FL_SUBMENU },
+  { "&File",           0, 0, 0, FL_SUBMENU, 0, 0, 0, 0 },
     {"New",            0, cb_New_stub,         0, 0, 0, 0, 14, 56},
     {"Open",    FL_F + 3, cb_Load_stub,        0, 0, 0, 0, 14, 56},
     {"Save",    FL_F + 2, cb_Save_stub,        0, 0, 0, 0, 14, 56},
@@ -2869,7 +2869,7 @@ Fl_Menu_Item mainWindow_c::menu_MainMenu[] = {
       {"STL",             0, cb_STLExport_stub, 0, 0, 0, 0, 14, 56},
       { 0 },
     {"Quit",           0, cb_Quit_stub,        0, 0, 3, 0, 14, 56},
-    { 0 },
+    { },
   {"&Edit",            0, 0, 0, FL_SUBMENU, 0, 0, 14, 56},
     {"Undo",    FL_COMMAND+'z', cb_Undo_stub,  0, FL_MENU_INACTIVE, 0, 0, 14, 56},
     {"Redo",    FL_COMMAND+FL_SHIFT+'z', cb_Redo_stub, 0, FL_MENU_INACTIVE, 0, 0, 14, 56},
@@ -2881,11 +2881,11 @@ Fl_Menu_Item mainWindow_c::menu_MainMenu[] = {
     {"Display with colour constraint colors", 0, cb_ViewMode1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
     {"Display in anaglyph mode", 0, cb_ViewMode2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
     {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-    { 0 },
+    { },
   {"Settings",         0, cb_Config_stub,      0, 0, 0, 0, 14, 56},
   {"Tutorial",         0, cb_Tutorial_stub,    0, 0, 0, 0, 14, 56},
   {"About",            0, cb_About_stub,       0, 0, 3, 0, 14, 56},
-  {0}
+  { }
 };
 
 void mainWindow_c::show(int argn, char ** argv) {
