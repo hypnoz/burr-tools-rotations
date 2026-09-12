@@ -870,6 +870,7 @@ unsigned int voxelFrame_c::addSpace(const voxel_c * vx) {
 
   i.list = 0;
   i.poly = 0;
+  i.pickPoly = 0;
   i.animAngle = 0;
   i.animAxisX = i.animAxisY = i.animAxisZ = 0;
   i.animPivotX = i.animPivotY = i.animPivotZ = 0;
@@ -887,6 +888,8 @@ void voxelFrame_c::clearSpaces(void) {
     if (shapes[i].poly)
       delete shapes[i].poly;
     shapes[i].poly = 0;
+    delete shapes[i].pickPoly;
+    shapes[i].pickPoly = 0;
   }
 
   shapes.clear();
@@ -945,6 +948,8 @@ void voxelFrame_c::setDrawingMode(unsigned int nr, drawingMode mode) {
     {
       delete shapes[nr].poly;
       shapes[nr].poly = 0;
+      delete shapes[nr].pickPoly;
+      shapes[nr].pickPoly = 0;
     }
   }
 
@@ -1063,6 +1068,7 @@ void voxelFrame_c::showMesh(Polyhedron * poly)
   i.dim = false;
 
   i.list = 0;
+  i.pickPoly = 0;
 
   shapes.push_back(i);
 
@@ -1387,6 +1393,8 @@ void voxelFrame_c::showPlacement(const problem_c * puz, unsigned int piece, unsi
       {
         delete shapes[0].poly;
         shapes[0].poly = 0;
+        delete shapes[0].pickPoly;
+        shapes[0].pickPoly = 0;
       }
     }
     else

@@ -19,6 +19,7 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 #include "stlexport.h"
+#include "filechooser.h"
 #include <stdlib.h>
 
 #include "BlockList.h"
@@ -42,7 +43,7 @@
 #define GL_SILENCE_DEPRECATION 1
 #include <FL/Fl.H>
 #include <FL/fl_ask.H>
-#include "filechooser.h"
+#include <FL/Fl_File_Chooser.H>
 
 #pragma GCC diagnostic pop
 
@@ -93,29 +94,26 @@ static void updateParameters(stlExporter_c * stl, const std::vector<inputField_c
   }
 }
 
-static void cb_stlExport3DUpdate_stub(Fl_Widget* /*o*/, void* v) { ((stlExport_c*)(v))->cb_Update3DView(1); }
-static void cb_stlExport3DUpdate2_stub(Fl_Widget* /*o*/, void* v) { ((stlExport_c*)(v))->cb_Update3DView(2); }
-void stlExport_c::cb_Update3DView(int type)
+static void cb_stlExport3DUpdate_stub(Fl_Widget* /*o*/, void* v) { ((stlExport_c*)(v))->cb_Update3DView(); }
+void stlExport_c::cb_Update3DView(void)
 {
   updateParameters(stl, params);
-
-  if (type == 2)
-  {
-    holes.clear();
-  }
 
   Polyhedron * p = 0;
   try
   {
-    p = stl->getMesh(*puzzle->getShape(ShapeSelect->getSelection()), holes);
+    p = stl->getMesh(*puzzle->getShape(ShapeSelect->getSelection()));
   }
   catch (stlException_c e)
   {
+    /* nothing to show: the preview must not keep the last mesh */
+    view3D->getView()->showNothing();
     fl_message("%s",e.comment);
     return;
   }
   catch (...)
   {
+    view3D->getView()->showNothing();
     fl_message("The generated mesh is faulty in some way, try to tweak the parameter");
     return;
   }
@@ -141,7 +139,7 @@ void stlExport_c::cb_FileChooser(void)
   char curFile[500];
   snprintf(curFile, 500, "%s/%s", Pname->value(), Fname->value());
 
-  const char * f = bt_file_chooser_save("Choose STL File to write", "STL Files\t*.stl", curFile);
+  const char * f = fileChooser("Choose STL File to write", "STL", "*.stl", curFile, true);
 
   if (f)
   {
@@ -182,35 +180,6 @@ void stlExport_c::cb_Update3DViewParams(void)
   }
 }
 
-static void cb_3dClick_stub(Fl_Widget* /*o*/, void* v) { ((stlExport_c*)v)->cb_3dClick(); }
-void stlExport_c::cb_3dClick(void)
-{
-  if (Fl::event_ctrl() || Fl::event_shift())
-  {
-    unsigned int shape, face;
-    unsigned long voxel;
-
-    if (view3D->getView()->pickShape(Fl::event_x(),
-        view3D->getView()->h()-Fl::event_y(),
-        &shape, &voxel, &face))
-    {
-      if (shape == 0)
-      {
-        if (Fl::event_ctrl())
-        {
-          holes.removeFace(voxel, face);
-          cb_Update3DView(1);
-        }
-        if (Fl::event_shift())
-        {
-          holes.addFace(voxel, face);
-          cb_Update3DView(1);
-        }
-      }
-    }
-  }
-}
-
 stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
 
   label("Export STL");
@@ -246,13 +215,6 @@ stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
       Binary->value(1);
     else
       Binary->value(0);
-
-    CoplanarMerge = new LFl_Check_Button("Merge flat surfaces", 0, 3, 3, 1);
-    CoplanarMerge->tooltip(" Merge connected coplanar faces into fewer, larger triangles ");
-    if (stl->getCoplanarMerge())
-      CoplanarMerge->value(1);
-    else
-      CoplanarMerge->value(0);
 
     fr->end();
   }
@@ -348,7 +310,7 @@ stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
     ShapeSelect->setSelection(0);
 
     LBlockListGroup_c * gr = new LBlockListGroup_c(0, 2, 1, 1, ShapeSelect);
-    gr->callback(cb_stlExport3DUpdate2_stub, this);
+    gr->callback(cb_stlExport3DUpdate_stub, this);
     gr->setMinimumSize(200, 100);
     gr->stretch();
     gr->weight(0, 1);
@@ -399,8 +361,7 @@ stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
   view3D = new LView3dGroup(1, 0, 1, 4);
   view3D->setMinimumSize(400, 400);
   view3D->weight(1, 0);
-  view3D->callback(cb_3dClick_stub, this);
-  cb_Update3DView(1);
+  cb_Update3DView();
 
   set_modal();
 }
@@ -414,7 +375,6 @@ void stlExport_c::exportSTL(int shape)
   updateParameters(stl, params);
 
   stl->setBinaryMode(Binary->value() != 0);
-  stl->setCoplanarMerge(CoplanarMerge->value() != 0);
 
   if (Pname->value() && Pname->value()[0] && Pname->value()[strlen(Pname->value())-1] != '/') {
       snprintf(name, 1000, "%s/%s", Pname->value(), Fname->value());
@@ -422,7 +382,9 @@ void stlExport_c::exportSTL(int shape)
       snprintf(name, 1000, "%s%s", Pname->value(), Fname->value());
   }
 
-  if (fileExists(name))
+  // no need to ask when the file is the one the user picked in a native
+  // save dialog, that dialog already asked
+  if (fileExists(name) && !fileChooserConfirmedOverwrite(name))
   {
     if (fl_choice("File exists overwrite?", "Cancel", "Overwrite", 0) == 0)
     {
@@ -431,7 +393,7 @@ void stlExport_c::exportSTL(int shape)
   }
 
   try {
-    stl->write(name, *v, holes);
+    stl->write(name, *v);
   }
 
   catch (stlException_c e) {
