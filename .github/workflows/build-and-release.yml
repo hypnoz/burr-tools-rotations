@@ -271,8 +271,9 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
+          ARCH="$(uname -m)"
           ./build_scripts/create-macos-bundle.sh "$VERSION"
-          test -f "BurrTools-${VERSION}.dmg"
+          test -f "BurrTools-${VERSION}-macos-${ARCH}.dmg"
 
       - name: Package macOS CLI tools
         env:
@@ -280,11 +281,14 @@ jobs:
         run: |
           ARCH=$(uname -m)
           STAGE=$(mktemp -d)
-          cp build/burrTxt build/burrTxt2 README.md COPYING "$STAGE/"
+          cp build/burrTxt "burrTxt-${VERSION}-macos-${ARCH}"
+          cp build/burrTxt2 "burrTxt2-${VERSION}-macos-${ARCH}"
+          cp README.md COPYING "$STAGE/"
+          cp "burrTxt-${VERSION}-macos-${ARCH}" "burrTxt2-${VERSION}-macos-${ARCH}" "$STAGE/"
           (cd "$STAGE" && zip -r "$GITHUB_WORKSPACE/burrtools-${VERSION}-macos-${ARCH}-cli.zip" .)
           rm -rf "$STAGE"
           mkdir -p artifacts
-          mv "BurrTools-${VERSION}.dmg" "burrtools-${VERSION}-macos-${ARCH}-cli.zip" artifacts/
+          mv "BurrTools-${VERSION}-macos-${ARCH}.dmg" "burrtools-${VERSION}-macos-${ARCH}-cli.zip" artifacts/
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
