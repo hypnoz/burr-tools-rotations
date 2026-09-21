@@ -33,6 +33,10 @@ rebuild:
 test: build
     ninja -C build test
 
+# Run regression test comparing burrTxt and burrTxt2 against known-good 0.7.1 release output
+test-regression: build
+    python3 test/test_examples_regression.py
+
 # Run fast static analysis (cppcheck) on BurrTools source files
 check-cppcheck: setup
     cppcheck --project=build/compile_commands.json \
