@@ -20,11 +20,48 @@
  */
 #include "filechooser.h"
 
+#include <FL/Fl.H>
+#include <FL/Fl_Gl_Window.H>
+#include <FL/Fl_Group.H>
+#include <FL/Fl_Window.H>
 #include <FL/Fl_Native_File_Chooser.H>
 
 #include <string.h>
 
 static char bt_file_chooser_result[4096];
+
+/* While the native dialog is up the window behind it may be dimmed by the
+ * window system. An Fl_Gl_Window does not receive that dim and paints it
+ * itself (see platform::modalDimWash), but only when it is asked to
+ * redraw -- and nothing damages it meanwhile, because FLTK is just pumping
+ * Fl::wait() inside the dialog. So drive the redraw for the duration.
+ */
+static const double GL_REDRAW_INTERVAL = 0.1;
+
+static void redrawGlViews(Fl_Widget * w)
+{
+  if (dynamic_cast<Fl_Gl_Window *>(w))
+  {
+    w->redraw();
+    return;
+  }
+
+  if (Fl_Group * g = dynamic_cast<Fl_Group *>(w))
+    for (int i = 0; i < g->children(); i++)
+      redrawGlViews(g->child(i));
+}
+
+static void redrawAllGlViews(void)
+{
+  for (Fl_Window * w = Fl::first_window(); w; w = Fl::next_window(w))
+    redrawGlViews(w);
+}
+
+static void glRedrawPump(void *)
+{
+  redrawAllGlViews();
+  Fl::repeat_timeout(GL_REDRAW_INTERVAL, glRedrawPump);
+}
 
 static const char * run_file_chooser(const char *title, const char *pattern, const char *preset, int type)
 {
@@ -40,7 +77,12 @@ static const char * run_file_chooser(const char *title, const char *pattern, con
   if (preset && preset[0])
     chooser.preset_file(preset);
 
-  if (chooser.show() != 0)
+  Fl::add_timeout(GL_REDRAW_INTERVAL, glRedrawPump);
+  const int shown = chooser.show();
+  Fl::remove_timeout(glRedrawPump);
+  redrawAllGlViews();
+
+  if (shown != 0)
     return 0;
 
   const char * filename = chooser.filename();

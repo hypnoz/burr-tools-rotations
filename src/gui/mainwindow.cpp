@@ -77,6 +77,9 @@
 #include "../tools/xml.h"
 
 #include "filechooser.h"
+#include "platform.h"
+#include "mainmenu.h"
+#include "../lib/bt_assert.h"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -105,6 +108,25 @@
 #include <fstream>
 #include <cstring>
 #include <string>
+
+
+static int liveMenuIndex(const Fl_Menu_ * m, Fl_Callback * cb) {
+  const Fl_Menu_Item * items = m->menu();
+  if (!items) return -1;
+  for (int i = 0; i < m->size(); i++)
+    if (items[i].callback() == cb) return i;
+  return -1;
+}
+
+static void setLiveMenuActive(Fl_Menu_ * m, int index, bool active) {
+  bt_assert(index >= 0);
+  int flags = m->mode(index);
+  if (active)
+    flags &= ~FL_MENU_INACTIVE;
+  else
+    flags |= FL_MENU_INACTIVE;
+  m->mode(index, flags);
+}
 
 /* returns true, if file exists, this is not the
  optimal way to do this. It would be better to open
@@ -1559,14 +1581,37 @@ void mainWindow_c::cb_3dClick(void) {
   }
 }
 
-static void cb_New_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_New(); }
+
+bool mainWindow_c::confirmDiscard(const char * action) {
+
+  if (!changed)
+    return true;
+
+  char msg[256];
+  snprintf(msg, sizeof(msg),
+           "The puzzle has unsaved changes.\nSave before you %s?", action);
+
+  switch (fl_choice("%s", "Cancel", "Save", "Don't Save", msg)) {
+
+    case 1:
+      cb_Save();
+      return !changed;
+
+    case 2:
+      return true;
+
+    default:
+      return false;
+  }
+}
+
+void cb_New_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_New(); }
 void mainWindow_c::cb_New(void) {
 
   if (threadStopped()) {
 
-    if (changed)
-      if (fl_choice("Puzzle changed are you sure?", "Cancel", "New Puzzle", 0) == 0)
-        return;
+    if (!confirmDiscard("create a new puzzle"))
+      return;
 
     gridTypeSelectorWindow_c w;
     w.show();
@@ -1579,7 +1624,7 @@ void mainWindow_c::cb_New(void) {
     if (fname) {
       delete [] fname;
       fname = 0;
-      copy_label("BurrTools - unknown");
+      copy_label(platform::windowTitle(0).c_str());
     }
 
     changed = false;
@@ -1590,14 +1635,13 @@ void mainWindow_c::cb_New(void) {
   }
 }
 
-static void cb_Load_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load(); }
+void cb_Load_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load(); }
 void mainWindow_c::cb_Load(void) {
 
   if (threadStopped()) {
 
-    if (changed)
-      if (fl_choice("Puzzle changed; are you sure?", "Cancel", "Open", 0) == 0)
-        return;
+    if (!confirmDiscard("open another puzzle"))
+      return;
 
     const char * f = bt_file_chooser_open("Open Puzzle", "Puzzle Files\t*.xmpuzzle", "");
 
@@ -1627,14 +1671,13 @@ static bool hasFileExtension(const char * path, const char * ext)
   return true;
 }
 
-static void cb_Load_Ps3d_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load_Ps3d(); }
+void cb_Load_Ps3d_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load_Ps3d(); }
 void mainWindow_c::cb_Load_Ps3d(void) {
 
   if (threadStopped()) {
 
-    if (changed)
-      if (fl_choice("Puzzle changed; are you sure?", "Cancel", "Load", 0) == 0)
-        return;
+    if (!confirmDiscard("import another puzzle"))
+      return;
 
     const char * f = bt_file_chooser_open("Import PuzzleSolver3D File",
                                           "PuzzleSolver3D Files\t*.puz",
@@ -1654,7 +1697,7 @@ void mainWindow_c::cb_Load_Ps3d(void) {
       fname = new char[strlen(f)+1];
       strcpy(fname, f);
 
-      copy_label((std::string("BurrTools - ") + fname).c_str());
+      copy_label(platform::windowTitle(fname).c_str());
 
       ReplacePuzzle(newPuzzle);
 
@@ -1667,14 +1710,13 @@ void mainWindow_c::cb_Load_Ps3d(void) {
   }
 }
 
-static void cb_Load_Scad_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load_Scad(); }
+void cb_Load_Scad_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load_Scad(); }
 void mainWindow_c::cb_Load_Scad(void) {
 
   if (threadStopped()) {
 
-    if (changed)
-      if (fl_choice("Puzzle changed; are you sure?", "Cancel", "Load", 0) == 0)
-        return;
+    if (!confirmDiscard("import another puzzle"))
+      return;
 
     const char * f = bt_file_chooser_open("Import Puzzlecad File",
                                           "OpenSCAD Files\t*.scad",
@@ -1694,7 +1736,7 @@ void mainWindow_c::cb_Load_Scad(void) {
       fname = new char[strlen(f)+1];
       strcpy(fname, f);
 
-      copy_label((std::string("BurrTools - ") + fname).c_str());
+      copy_label(platform::windowTitle(fname).c_str());
 
       ReplacePuzzle(newPuzzle);
 
@@ -1707,7 +1749,7 @@ void mainWindow_c::cb_Load_Scad(void) {
   }
 }
 
-static void cb_Save_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Save(); }
+void cb_Save_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Save(); }
 void mainWindow_c::cb_Save(void) {
 
   if (threadStopped()) {
@@ -1734,7 +1776,7 @@ void mainWindow_c::cb_Save(void) {
   }
 }
 
-static void cb_Convert_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Convert(); }
+void cb_Convert_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Convert(); }
 void mainWindow_c::cb_Convert(void) {
 
   convertWindow_c win(puzzle->getGridType()->getType());
@@ -1773,7 +1815,7 @@ class voxelTableVector_c : public voxelTable_c
     const voxel_c * findSpace(unsigned int index) const { return (*shapes)[index]; }
 };
 
-static void cb_AssembliesToShapes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AssembliesToShapes(); }
+void cb_AssembliesToShapes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AssembliesToShapes(); }
 void mainWindow_c::cb_AssembliesToShapes(void) {
 
   assmImportWindow_c win(puzzle);
@@ -1883,7 +1925,7 @@ void mainWindow_c::cb_AssembliesToShapes(void) {
   }
 }
 
-static void cb_SaveAs_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SaveAs(); }
+void cb_SaveAs_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SaveAs(); }
 void mainWindow_c::cb_SaveAs(void) {
 
   if (threadStopped()) {
@@ -1926,7 +1968,7 @@ void mainWindow_c::cb_SaveAs(void) {
         fname = new char[f2.length()+1];
         strcpy(fname, f2.c_str());
 
-        copy_label((std::string("BurrTools - ") + fname).c_str());
+        copy_label(platform::windowTitle(fname).c_str());
 
       } else {
 
@@ -1936,13 +1978,13 @@ void mainWindow_c::cb_SaveAs(void) {
   }
 }
 
-static void cb_Quit_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->hide(); }
+void cb_Quit_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->hide(); }
 void mainWindow_c::hide(void) {
-  if ((!changed) || fl_choice("Puzzle changed do you want to quit and lose the changes?", "Cancel", "Quit", 0))
+  if (confirmDiscard("quit"))
     Fl_Double_Window::hide();
 }
 
-static void cb_Config_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Config(); }
+void cb_Config_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Config(); }
 void mainWindow_c::cb_Config(void) {
   config.dialog();
   activateConfigOptions();
@@ -1964,7 +2006,7 @@ void mainWindow_c::cb_ToggleNotes(void) {
   relayoutViewStack();
 }
 
-static void cb_ShowNotes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ShowNotes(); }
+void cb_ShowNotes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ShowNotes(); }
 void mainWindow_c::cb_ShowNotes(void) {
 
   if (notesPanel->visible())
@@ -2039,7 +2081,7 @@ void mainWindow_c::relayoutViewStack(void) {
   redraw();
 }
 
-static void cb_ImageExportVector_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ImageExportVector(); }
+void cb_ImageExportVector_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ImageExportVector(); }
 void mainWindow_c::cb_ImageExportVector(void) {
 
   vectorExportWindow_c w;
@@ -2052,9 +2094,9 @@ void mainWindow_c::cb_ImageExportVector(void) {
     View3D->getView()->exportToVector(w.getFileName(), w.getVectorType());
 }
 
-static void cb_ImageExport_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ImageExport(); }
+void cb_ImageExport_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ImageExport(); }
 void mainWindow_c::cb_ImageExport(void) {
-  imageExport_c w(puzzle.get(), fname);
+  imageExport_c w(puzzle, fname);
   w.show();
 
   while (w.visible()) {
@@ -2066,9 +2108,9 @@ void mainWindow_c::cb_ImageExport(void) {
   }
 }
 
-static void cb_STLExport_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_STLExport(); }
+void cb_STLExport_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_STLExport(); }
 void mainWindow_c::cb_STLExport(void) {
-  stlExport_c w(puzzle.get(), fname);
+  stlExport_c w(puzzle, fname);
   w.show();
 
   while (w.visible()) {
@@ -2076,7 +2118,7 @@ void mainWindow_c::cb_STLExport(void) {
   }
 }
 
-static void cb_Export_Scad_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Export_Scad(); }
+void cb_Export_Scad_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Export_Scad(); }
 void mainWindow_c::cb_Export_Scad(void) {
 
   if (puzzle->getGridType()->getType() != gridType_c::GT_BRICKS) {
@@ -2119,7 +2161,7 @@ void mainWindow_c::cb_Export_Scad(void) {
   }
 }
 
-static void cb_StatusWindow_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_StatusWindow(); }
+void cb_StatusWindow_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_StatusWindow(); }
 void mainWindow_c::cb_StatusWindow(void) {
 
   if (!detailsPanel)
@@ -2163,7 +2205,7 @@ void mainWindow_c::cb_DetailsChanged(void) {
   updateInterface();
 }
 
-static void cb_Toggle3D_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Toggle3D(); }
+void cb_Toggle3D_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Toggle3D(); }
 void mainWindow_c::cb_Toggle3D(void) {
 
   if (TaskSelectionTab->value() == TabPieces) {
@@ -2175,25 +2217,40 @@ void mainWindow_c::cb_Toggle3D(void) {
   }
 }
 
-static void cb_ViewMode0_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(0); }
-static void cb_ViewMode1_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(1); }
-static void cb_ViewMode2_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(2); }
-static void cb_ViewMode3_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(3); }
+void cb_ViewMode0_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(0); }
+void cb_ViewMode1_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(1); }
+void cb_ViewMode2_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(2); }
+void cb_ViewMode3_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(3); }
 
 static int viewModeMenuIdx[4];
 
 void mainWindow_c::cb_ViewMode(int mode) {
+
+  static Fl_Callback * const cbs[4] = {
+    cb_ViewMode0_stub, cb_ViewMode1_stub, cb_ViewMode2_stub, cb_ViewMode3_stub
+  };
 
   for (int i = 0; i < 4; i++)
     menu_MainMenu[viewModeMenuIdx[i]].clear();
   if (mode >= 0 && mode < 4)
     menu_MainMenu[viewModeMenuIdx[mode]].set();
 
+  if (MainMenu) {
+    Fl_Menu_Item * items = const_cast<Fl_Menu_Item *>(MainMenu->menu());
+    for (int i = 0; i < 4; i++) {
+      int idx = liveMenuIndex(MainMenu, cbs[i]);
+      if (idx < 0) continue;
+      if (i == mode) items[idx].set();
+      else items[idx].clear();
+    }
+    MainMenu->update();
+  }
+
   StatusLine->setColorModeIndex(mode);
   cb_Status();
 }
 
-static void cb_About_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_About(); }
+void cb_About_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_About(); }
 void mainWindow_c::cb_About(void) {
 
   fl_message("This is the GUI for BurrTools\n"
@@ -2269,7 +2326,7 @@ The documentation was written for an older version of BurrTools, but the concept
 )TUTORIAL";
 
 static void cb_TutorialClose_stub(Fl_Widget* /*o*/, void* v) { ((Fl_Double_Window*)v)->hide(); }
-static void cb_Tutorial_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Tutorial(); }
+void cb_Tutorial_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Tutorial(); }
 static void cb_SolverTypeHelp_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SolverTypeHelp(); }
 static void cb_SortByHelp_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SortByHelp(); }
 static void cb_SolverTypeHelpClose_stub(Fl_Widget* /*o*/, void* v) { ((Fl_Double_Window*)v)->hide(); }
@@ -2666,16 +2723,11 @@ void mainWindow_c::updateUndoRedoButtons(void) {
   else menu_MainMenu[findMenuEntry("Redo")].deactivate();
 
   if (MainMenu) {
-    const Fl_Menu_Item * mu = MainMenu->find_item("Undo");
-    const Fl_Menu_Item * mr = MainMenu->find_item("Redo");
-    if (mu) {
-      if (canU) const_cast<Fl_Menu_Item*>(mu)->activate();
-      else const_cast<Fl_Menu_Item*>(mu)->deactivate();
-    }
-    if (mr) {
-      if (canR) const_cast<Fl_Menu_Item*>(mr)->activate();
-      else const_cast<Fl_Menu_Item*>(mr)->deactivate();
-    }
+    const int ui = liveMenuIndex(MainMenu, cb_Undo_stub);
+    const int ri = liveMenuIndex(MainMenu, cb_Redo_stub);
+    if (ui >= 0) setLiveMenuActive(MainMenu, ui, canU);
+    if (ri >= 0) setLiveMenuActive(MainMenu, ri, canR);
+    MainMenu->update();
   }
 }
 
@@ -2705,14 +2757,14 @@ void mainWindow_c::applyHistoryRestore(unsigned int selected) {
   redraw();
 }
 
-static void cb_Undo_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Undo(); }
+void cb_Undo_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Undo(); }
 void mainWindow_c::cb_Undo(void) {
   if (!shapeHistory || !shapeHistory->canUndo() || assmThread)
     return;
   applyHistoryRestore(shapeHistory->undo(puzzle));
 }
 
-static void cb_Redo_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Redo(); }
+void cb_Redo_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Redo(); }
 void mainWindow_c::cb_Redo(void) {
   if (!shapeHistory || !shapeHistory->canRedo() || assmThread)
     return;
@@ -2734,13 +2786,16 @@ bool mainWindow_c::threadStopped(void) {
   return true;
 }
 
-bool mainWindow_c::tryToLoad(const char * f) {
+bool mainWindow_c::tryToLoad(const char * f, bool * reportedError) {
+
+  if (reportedError) *reportedError = false;
 
   // it may well be that the file doesn't exist, if it came from the command line
   if (!f) return false;
   if (!fileExists(f)) return false;
 
   std::istream * str = openGzFile(f);
+  if (!str) return false;
   xmlParser_c pars(*str);
 
   puzzle_c * newPuzzle;
@@ -2752,6 +2807,7 @@ bool mainWindow_c::tryToLoad(const char * f) {
   catch (xmlParserException_c &e)
   {
     fl_message("%s",(std::string("load error: ") + e.what()).c_str());
+    if (reportedError) *reportedError = true;
     delete str;
     return false;
   }
@@ -2762,7 +2818,7 @@ bool mainWindow_c::tryToLoad(const char * f) {
   fname = new char[strlen(f)+1];
   strcpy(fname, f);
 
-  copy_label((std::string("BurrTools - ") + fname).c_str());
+  copy_label(platform::windowTitle(fname).c_str());
 
   ReplacePuzzle(newPuzzle);
 
@@ -2790,6 +2846,35 @@ bool mainWindow_c::tryToLoad(const char * f) {
     fl_message("%s",puzzle->getComment().c_str());
 
   return true;
+}
+
+
+void mainWindow_c::openFromSystem(const char * filename) {
+
+  struct ReentrancyGuard {
+    bool & flag;
+    explicit ReentrancyGuard(bool & f) : flag(f) { flag = true; }
+    ~ReentrancyGuard() { flag = false; }
+  };
+
+  if (handlingSystemOpen)
+    return;
+
+  ReentrancyGuard guard(handlingSystemOpen);
+
+  if (!filename || !filename[0])
+    return;
+
+  if (!threadStopped())
+    return;
+
+  if (!confirmDiscard("open that puzzle"))
+    return;
+
+  bool reportedError = false;
+
+  if (!tryToLoad(filename, &reportedError) && !reportedError)
+    fl_message("Could not open %s", filename);
 }
 
 void mainWindow_c::ReplacePuzzle(puzzle_c * NewPuzzle) {
@@ -3171,6 +3256,9 @@ void mainWindow_c::initViewMenuIcons(void) {
     ViewMode3D_xpm,
     ViewMode3DL_xpm
   };
+  static Fl_Callback * const cbs[4] = {
+    cb_ViewMode0_stub, cb_ViewMode1_stub, cb_ViewMode2_stub, cb_ViewMode3_stub
+  };
 
   for (int i = 0; i < 4; i++) {
     viewModeMenuIdx[i] = mainWindow_c::findMenuEntry(names[i]);
@@ -3179,6 +3267,14 @@ void mainWindow_c::initViewMenuIcons(void) {
     ml[i].typeb = FL_NORMAL_LABEL;
     ml[i].labelb = names[i];
     menu_MainMenu[viewModeMenuIdx[i]].multi_label(&ml[i]);
+
+    if (MainMenu) {
+      int idx = liveMenuIndex(MainMenu, cbs[i]);
+      if (idx >= 0) {
+        Fl_Menu_Item * items = const_cast<Fl_Menu_Item *>(MainMenu->menu());
+        items[idx].multi_label(&ml[i]);
+      }
+    }
   }
 }
 
@@ -3195,21 +3291,41 @@ void mainWindow_c::updateInterface(void) {
 
   // update the menu items activate state
 
-  // there must be at least one shape before there is something to export...
-  if (puzzle->getNumberOfShapes() > 0)
+  const bool exportActive = puzzle->getNumberOfShapes() > 0;
+  const bool stlActive    = (ggt->getGridType()->getCapabilities() & gridType_c::CAP_STLEXPORT)
+                            && puzzle->getNumberOfShapes() > 0;
+
+  if (exportActive != menuExportActive || stlActive != menuSTLActive) {
+    const int imageIndex = liveMenuIndex(MainMenu, cb_ImageExport_stub);
+    const int stlIndex   = liveMenuIndex(MainMenu, cb_STLExport_stub);
+    const int scadIndex  = liveMenuIndex(MainMenu, cb_Export_Scad_stub);
+    const int vecIndex   = liveMenuIndex(MainMenu, cb_ImageExportVector_stub);
+
+    bt_assert(imageIndex >= 0);
+    bt_assert(stlIndex >= 0);
+
+    if (imageIndex >= 0 && stlIndex >= 0) {
+      setLiveMenuActive(MainMenu, imageIndex, exportActive);
+      setLiveMenuActive(MainMenu, stlIndex, stlActive);
+      if (scadIndex >= 0) setLiveMenuActive(MainMenu, scadIndex, exportActive);
+      if (vecIndex >= 0) setLiveMenuActive(MainMenu, vecIndex, exportActive);
+      MainMenu->update();
+      menuExportActive = exportActive;
+      menuSTLActive    = stlActive;
+    }
+  }
+
+  // Keep the static table in sync for findMenuEntry-based callers
+  if (exportActive)
     menu_MainMenu[findMenuEntry("Images")].activate();
   else
     menu_MainMenu[findMenuEntry("Images")].deactivate();
-
-  if (ggt->getGridType()->getCapabilities() & gridType_c::CAP_STLEXPORT &&
-      puzzle->getNumberOfShapes() > 0)
+  if (stlActive)
     menu_MainMenu[findMenuEntry("STL")].activate();
   else
     menu_MainMenu[findMenuEntry("STL")].deactivate();
 
   updateUndoRedoButtons();
-
-  MainMenu->copy(menu_MainMenu, this);
 
   unsigned int prob = solutionProblem->getSelection();
 
@@ -3951,6 +4067,7 @@ void mainWindow_c::update(void) {
     if (!assmThread || &(assmThread->getProblem()) == puzzle->getProblem(solutionProblem->getSelection()))
       updateInterface();
   }
+  platform::setDocumentEdited(this, changed);
 }
 
 void mainWindow_c::Toggle3DView(void)
@@ -4055,6 +4172,18 @@ int mainWindow_c::handle(int event) {
       }
     }
     switch(Fl::event_key()) {
+      case FL_F + 2:
+        if (!platform::usesSystemMenuBar()) break;
+        cb_Save_stub(this, this);
+        return 1;
+      case FL_F + 3:
+        if (!platform::usesSystemMenuBar()) break;
+        cb_Load_stub(this, this);
+        return 1;
+      case FL_F + 4:
+        if (!platform::usesSystemMenuBar()) break;
+        cb_Toggle3D_stub(this, this);
+        return 1;
       case FL_F + 5:
         if (TaskSelectionTab->value() == TabPieces) {
           editChoice->select(0);
@@ -5118,10 +5247,13 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   shapeHistory->reset(puzzle);
   ggt = new guiGridType_c(puzzle->getGridType());
   changed = false;
+  handlingSystemOpen = false;
+  menuExportActive = true;
+  menuSTLActive = true;
   BtnUndo = 0;
   BtnRedo = 0;
 
-  copy_label("BurrTools - unknown");
+  copy_label(platform::windowTitle(0).c_str());
   user_data((void*)(this));
 
   /* original comment dialog is 400x200; its text box is the window
@@ -5142,10 +5274,16 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
 
   layouter_c * menuRow = new layouter_c(0, 0, 1, 1);
 
+#ifdef __APPLE__
+  LFl_Sys_Menu_Bar * menuBar = new LFl_Sys_Menu_Bar(0, 0, 1, 1);
+#else
   LFl_Menu_Bar * menuBar = new LFl_Menu_Bar(0, 0, 1, 1);
+#endif
   MainMenu = menuBar;
+  menuBar->copy(mainmenu::table(), this);
   initViewMenuIcons();
-  menuBar->copy(menu_MainMenu, this);
+  menuBar->update();
+  mainmenu::installApplicationMenu(this);
   menuBar->weight(1, 0);
 
   notesToggle = new LFlatButton_c(1, 0, 1, 1, "Show Notes",

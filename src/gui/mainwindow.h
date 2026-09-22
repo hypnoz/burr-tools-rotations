@@ -81,6 +81,10 @@ class mainWindow_c : public LFl_Double_Window {
   bool changed;
   int editSymmetries;
 
+  bool handlingSystemOpen;
+  bool menuExportActive;
+  bool menuSTLActive;
+
   bool expertMode;
 
   pixmapList_c pm;
@@ -168,7 +172,8 @@ class mainWindow_c : public LFl_Double_Window {
   double ViewSizes[3];
   int currentTab;
 
-  bool tryToLoad(const char *fname);
+  bool tryToLoad(const char *fname, bool * reportedError = 0);
+  bool confirmDiscard(const char * action);
 
   void CreateShapeTab(void);
   void CreateProblemTab(void);
@@ -221,6 +226,8 @@ public:
   using LFl_Double_Window::show;
   void show(int argn, char ** argv);
 
+  void openFromSystem(const char * filename);
+
   // overwrite hide to check for changes in all possible exit situations
   void hide(void);
 
@@ -234,7 +241,7 @@ public:
 
   /* return an index into the main menu array with the given text */
   static int findMenuEntry(const char * txt);
-  static void initViewMenuIcons(void);
+  void initViewMenuIcons(void);
 
   /* the callback functions, as they are called from normal functions we need
    * to make them public, even though they should not be used from the outside

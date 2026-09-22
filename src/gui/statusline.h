@@ -13,6 +13,7 @@
 #define __STATUS_LINE_H__
 
 #include "Layouter.h"
+#include "Images.h"
 #include "voxelframe.h"
 
 class ButtonGroup_c;
@@ -25,6 +26,7 @@ private:
   ButtonGroup_c *rstyle;
   LFl_Box * text;
   int colorModeIndex;
+  pixmapList_c pm;
 
 public:
 
