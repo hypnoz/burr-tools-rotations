@@ -151,6 +151,10 @@ class voxelFrame_c : public Fl_Gl_Window {
     void setSize(double sz);
     double getSize(void) const { return size; }
 
+    /* near/far clip planes from content bounds rather than a blanket multiple
+     * of size. image_c::prepareOpenGlImagePart() must use the same values. */
+    void getNearFar(double * nearPlane, double * farPlane) const;
+
     void setCallback(VoxelViewCallbacks *c = 0) { cb = c; }
     bool pickShape(int x, int y, unsigned int *shape, unsigned long *voxel, unsigned int *face);
 
@@ -273,6 +277,9 @@ class voxelFrame_c : public Fl_Gl_Window {
     void drawDebugRotationLegend();
     void clearDebugRotationCells();
     void updateDebugRotationCells(piecePositions_c *shifting);
+
+    // conservative bounding-sphere radius (from the origin) of everything in shapes
+    double computeContentRadius(void) const;
 
     bool insideVisible;
 };

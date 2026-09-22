@@ -54,6 +54,7 @@ class voxel_2_c : public voxel_c {
     voxel_2_c(const voxel_c * orig) : voxel_c(orig) { }
 
     void transformPoint(int * x, int * y, int * z, unsigned int trans) const;
+    void getTransformMatrix(unsigned int trans, double m[9]) const;
     bool transform(unsigned int nr);
     void minimizePiece(void);
 

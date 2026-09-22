@@ -2138,6 +2138,42 @@ static void drawWash(float grey, float alpha) {
   glMatrixMode(GL_MODELVIEW);
 }
 
+double voxelFrame_c::computeContentRadius(void) const {
+
+  // straight-line distance from the origin, not the along-view-axis depth: a
+  // conservative stand-in for how far each shape's geometry can extend toward
+  // or away from the camera.
+  double r = 1.0;
+
+  for (const shapeInfo & s : shapes) {
+
+    if (!s.shape)
+      continue;
+
+    double radius = 0.5*sqrt((double)s.shape->getDiagonal())*s.scale;
+    double dist = sqrt((double)s.x*s.x + (double)s.y*s.y + (double)s.z*s.z) + radius;
+
+    if (dist > r) r = dist;
+  }
+
+  return r;
+}
+
+void voxelFrame_c::getNearFar(double * nearPlane, double * farPlane) const {
+
+  double dist = size*2;                    // camera distance, see the -size*2 translate in draw()
+  double r = computeContentRadius()*1.15;
+
+  double n = dist - r;
+  if (n < 0.1) n = 0.1;
+
+  double f = dist + r + 1.0;
+  if (f < n + 1.0) f = n + 1.0;
+
+  *nearPlane = n;
+  *farPlane = f;
+}
+
 void voxelFrame_c::draw() {
 
   if (!valid()) {
@@ -2195,7 +2231,9 @@ void voxelFrame_c::draw() {
     }
 
     // this call has to be identical to the one in image_c::prepareOpenGlImagePart
-    gluPerspective(15, 1.0*w()/h(), size+1, 3*size+1);
+    double nearPlane, farPlane;
+    getNearFar(&nearPlane, &farPlane);
+    gluPerspective(15, 1.0*w()/h(), nearPlane, farPlane);
     glMatrixMode(GL_MODELVIEW);
 
   }
