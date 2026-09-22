@@ -24,8 +24,6 @@ just rebuild        # Rebuild from scratch (removes build/ and re-runs meson set
 just build-werror   # Build with warnings treated as errors (excluding vendored code)
 ```
 
-<<<<<<< HEAD
-=======
 **Test suite timings.** The recipes above build first, so what you wait for is
 compilation plus test execution. Test execution alone is about 1.6s for `just
 test` and about 8.9s for `just test-all`; the difference is almost entirely the
@@ -41,7 +39,6 @@ site, minus the diagrams. It fails on any doxygen warning, so a stale `@param` o
 `\ref` is a build error, not a silently mangled page; CI runs the same recipe and publishes
 the result from `master` to https://burr-tools.github.io/burr-tools/.
 
->>>>>>> de08cbc5 (docs: generate the Doxygen reference in CI and publish it to GitHub Pages (#102))
 Coverage requires `gcovr` (`brew install gcovr` on macOS, `apt-get install gcovr` on Linux).
 On macOS the recipes pass `--gcov-executable "xcrun llvm-cov gcov"` automatically, because
 Apple Clang emits coverage data that plain `gcov` cannot parse.
