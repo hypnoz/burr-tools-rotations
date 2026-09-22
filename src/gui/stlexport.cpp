@@ -139,7 +139,7 @@ void stlExport_c::cb_FileChooser(void)
   char curFile[500];
   snprintf(curFile, 500, "%s/%s", Pname->value(), Fname->value());
 
-  const char * f = fileChooser("Choose STL File to write", "STL", "*.stl", curFile, true);
+  const char * f = bt_file_chooser_save("Choose STL File to write", "STL Files\t*.stl", curFile);
 
   if (f)
   {
@@ -382,9 +382,8 @@ void stlExport_c::exportSTL(int shape)
       snprintf(name, 1000, "%s%s", Pname->value(), Fname->value());
   }
 
-  // no need to ask when the file is the one the user picked in a native
-  // save dialog, that dialog already asked
-  if (fileExists(name) && !fileChooserConfirmedOverwrite(name))
+  // Native save dialogs already confirm overwrite; still ask for a typed path.
+  if (fileExists(name))
   {
     if (fl_choice("File exists overwrite?", "Cancel", "Overwrite", 0) == 0)
     {
