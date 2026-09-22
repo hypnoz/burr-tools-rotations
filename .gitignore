@@ -1,5 +1,6 @@
 *#
 *~
+admin/
 doxygen.cfg
 src/burrTxt
 src/burrTxt2
@@ -22,3 +23,20 @@ subprojects/*
 *.app
 dmg_contents/
 coverage-html/
+
+# Generated Doxygen API reference (`just docs`)
+gendoc/
+
+# Python artifacts
+__pycache__/
+*.pyc
+
+# Local generated test output
+*.stl
+puzzles/
+
+# Benchmark and profiling outputs
+bench/*.csv
+bench_run.log
+callgrind*.out*
+perf.data*
