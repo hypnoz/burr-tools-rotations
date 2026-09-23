@@ -704,6 +704,8 @@ class LFl_Scroll : public Fl_Scroll, public layoutable_c {
 
     void getMinSize(int *width, int *height) const;
     void resize(int x, int y, int w, int h);
+    int handle(int event);
+    void draw();
 
 };
 

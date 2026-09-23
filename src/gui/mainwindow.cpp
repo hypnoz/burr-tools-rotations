@@ -2416,7 +2416,7 @@ void mainWindow_c::cb_Tutorial(void) {
 
   LFl_Help_View *txt = new LFl_Help_View(0, 0, 1, 1);
   txt->textfont(FL_HELVETICA);
-  txt->textsize(16);
+  txt->textsize(18);
   txt->box(FL_FLAT_BOX);
   txt->color(FL_BACKGROUND_COLOR);
   txt->textcolor(FL_FOREGROUND_COLOR);
@@ -2452,9 +2452,9 @@ static void addSolverHelpHeading(int row, const char *name) {
   public:
     Heading(const char *txt, int r) : LFl_Box(txt, 0, r, 1, 1) {
       labelfont(FL_HELVETICA_BOLD);
-      labelsize(18);
+      labelsize(20);
       align(FL_ALIGN_TOP | FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-      fl_font(FL_HELVETICA_BOLD, 18);
+      fl_font(FL_HELVETICA_BOLD, 20);
       setMinimumSize(0, fl_height() + fl_descent() + 8);
     }
     void draw() {
@@ -2480,7 +2480,7 @@ static void addSolverHelpBody(int row, const char *text) {
   public:
     Body(const char *txt, int r) : LFl_Box(txt, 0, r, 1, 1) {
       labelfont(FL_HELVETICA);
-      labelsize(16);
+      labelsize(18);
       align(FL_ALIGN_TOP | FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
     }
     void getMinSize(int *width, int *height) const {
@@ -2507,7 +2507,7 @@ void mainWindow_c::cb_SolverTypeHelp(void) {
 
   LFl_Box *title = new LFl_Box("Explanation of Solver Types", 0, 0, 1, 1);
   title->labelfont(FL_HELVETICA_BOLD);
-  title->labelsize(20);
+  title->labelsize(22);
   title->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
   title->setMinimumSize(0, 32);
 
@@ -2576,7 +2576,7 @@ void mainWindow_c::cb_SortByHelp(void) {
 
   LFl_Box *title = new LFl_Box("Explanation of Sort by", 0, 0, 1, 1);
   title->labelfont(FL_HELVETICA_BOLD);
-  title->labelsize(20);
+  title->labelsize(22);
   title->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
   title->setMinimumSize(0, 32);
 
@@ -2966,40 +2966,40 @@ void mainWindow_c::ReplacePuzzle(puzzle_c * NewPuzzle) {
 
 Fl_Menu_Item mainWindow_c::menu_MainMenu[] = {
   { "&File",           0, 0, 0, FL_SUBMENU, 0, 0, 0, 0 },
-    {"New",            0, cb_New_stub,         0, 0, 0, 0, 14, 56},
-    {"Open",    FL_F + 3, cb_Load_stub,        0, 0, 0, 0, 14, 56},
-    {"Save",    FL_F + 2, cb_Save_stub,        0, 0, 0, 0, 14, 56},
-    {"Save As",        0, cb_SaveAs_stub,      0, FL_MENU_DIVIDER, 0, 0, 14, 56},
-    {"Import",         0, 0,                   0, FL_SUBMENU, 0, 0, 14, 56},
-      {"PuzzleSolver3D",       0, cb_Load_Ps3d_stub,   0, 0, 0, 0, 14, 56},
-      {"Puzzlecad (OpenSCAD)", 0, cb_Load_Scad_stub,   0, 0, 0, 0, 14, 56},
+    {"New",            0, cb_New_stub,         0, 0, 0, 0, 16, 56},
+    {"Open",    FL_F + 3, cb_Load_stub,        0, 0, 0, 0, 16, 56},
+    {"Save",    FL_F + 2, cb_Save_stub,        0, 0, 0, 0, 16, 56},
+    {"Save As",        0, cb_SaveAs_stub,      0, FL_MENU_DIVIDER, 0, 0, 16, 56},
+    {"Import",         0, 0,                   0, FL_SUBMENU, 0, 0, 16, 56},
+      {"PuzzleSolver3D",       0, cb_Load_Ps3d_stub,   0, 0, 0, 0, 16, 56},
+      {"Puzzlecad (OpenSCAD)", 0, cb_Load_Scad_stub,   0, 0, 0, 0, 16, 56},
       { },
-    {"Export",         0, 0,                   0, FL_SUBMENU, 0, 0, 14, 56},
-      {"Puzzlecad (OpenSCAD)", 0, cb_Export_Scad_stub, 0, 0, 0, 0, 14, 56},
-      {"Images",             0, cb_ImageExport_stub, 0, 0, 0, 0, 14, 56},
-      {"Vector Image",       0, cb_ImageExportVector_stub, 0, 0, 0, 0, 14, 56},
-      {"STL",             0, cb_STLExport_stub, 0, 0, 0, 0, 14, 56},
+    {"Export",         0, 0,                   0, FL_SUBMENU, 0, 0, 16, 56},
+      {"Puzzlecad (OpenSCAD)", 0, cb_Export_Scad_stub, 0, 0, 0, 0, 16, 56},
+      {"Images",             0, cb_ImageExport_stub, 0, 0, 0, 0, 16, 56},
+      {"Vector Image",       0, cb_ImageExportVector_stub, 0, 0, 0, 0, 16, 56},
+      {"STL",             0, cb_STLExport_stub, 0, 0, 0, 0, 16, 56},
       { },
-    {"Quit",           0, cb_Quit_stub,        0, 0, 3, 0, 14, 56},
+    {"Quit",           0, cb_Quit_stub,        0, 0, 3, 0, 16, 56},
     { },
-  {"&Edit",            0, 0, 0, FL_SUBMENU, 0, 0, 14, 56},
-    {"Undo",    FL_COMMAND+'z', cb_Undo_stub,  0, FL_MENU_INACTIVE, 0, 0, 14, 56},
-    {"Redo",    FL_COMMAND+FL_SHIFT+'z', cb_Redo_stub, 0, FL_MENU_INACTIVE, 0, 0, 14, 56},
-    {"Show Notes",     0, cb_ToggleNotes_stub, 0, 0, 0, 0, 14, 56},
-    {"Toggle 3D", FL_F + 4, cb_Toggle3D_stub,  0, 0, 0, 0, 14, 56},
-    {"Convert brick grid type to other", 0, cb_Convert_stub, 0, 0, 0, 0, 14, 56},
-    {"Convert assemblies to pieces", 0, cb_AssembliesToShapes_stub, 0, FL_MENU_DIVIDER, 0, 0, 14, 56},
-    {"Display normally with shape color", 0, cb_ViewMode0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
-    {"Display with colour constraint colors", 0, cb_ViewMode1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-    {"Display in anaglyph mode", 0, cb_ViewMode2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-    {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO | FL_MENU_DIVIDER, 0, 0, 14, 56},
-    {"Draw each voxel separately", 0, cb_RenderStyle0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
-    {"Draw flat faces with edges", 0, cb_RenderStyle1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-    {"Draw pieces like STL export", 0, cb_RenderStyle2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
+  {"&Edit",            0, 0, 0, FL_SUBMENU, 0, 0, 16, 56},
+    {"Undo",    FL_COMMAND+'z', cb_Undo_stub,  0, FL_MENU_INACTIVE, 0, 0, 16, 56},
+    {"Redo",    FL_COMMAND+FL_SHIFT+'z', cb_Redo_stub, 0, FL_MENU_INACTIVE, 0, 0, 16, 56},
+    {"Show Notes",     0, cb_ToggleNotes_stub, 0, 0, 0, 0, 16, 56},
+    {"Toggle 3D", FL_F + 4, cb_Toggle3D_stub,  0, 0, 0, 0, 16, 56},
+    {"Convert brick grid type to other", 0, cb_Convert_stub, 0, 0, 0, 0, 16, 56},
+    {"Convert assemblies to pieces", 0, cb_AssembliesToShapes_stub, 0, FL_MENU_DIVIDER, 0, 0, 16, 56},
+    {"Display normally with shape color", 0, cb_ViewMode0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 16, 56},
+    {"Display with colour constraint colors", 0, cb_ViewMode1_stub, 0, FL_MENU_RADIO, 0, 0, 16, 56},
+    {"Display in anaglyph mode", 0, cb_ViewMode2_stub, 0, FL_MENU_RADIO, 0, 0, 16, 56},
+    {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO | FL_MENU_DIVIDER, 0, 0, 16, 56},
+    {"Draw each voxel separately", 0, cb_RenderStyle0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 16, 56},
+    {"Draw flat faces with edges", 0, cb_RenderStyle1_stub, 0, FL_MENU_RADIO, 0, 0, 16, 56},
+    {"Draw pieces like STL export", 0, cb_RenderStyle2_stub, 0, FL_MENU_RADIO, 0, 0, 16, 56},
     { },
-  {"Settings",         0, cb_Config_stub,      0, 0, 0, 0, 14, 56},
-  {"Tutorial",         0, cb_Tutorial_stub,    0, 0, 0, 0, 14, 56},
-  {"About",            0, cb_About_stub,       0, 0, 3, 0, 14, 56},
+  {"Settings",         0, cb_Config_stub,      0, 0, 0, 0, 16, 56},
+  {"Tutorial",         0, cb_Tutorial_stub,    0, 0, 0, 0, 16, 56},
+  {"About",            0, cb_About_stub,       0, 0, 3, 0, 16, 56},
   { }
 };
 
@@ -4254,7 +4254,37 @@ int mainWindow_c::handle(int event) {
 }
 
 #define SZ_GAP 5                               // gap between elements
-#define MAIN_TAB_LABELSIZE 16                  // slightly larger than FLTK default 14
+#define MAIN_TAB_LABELSIZE 18                  // slightly larger than the raised default
+
+/* Width of the four tab headers. Fl_Tabs only adds a few pixels of chrome
+ * around each label — not 2× the font size, which overshot by ~60px. */
+static int leftBarWidth(void) {
+  static const char *const labels[] = {
+    "  Entities  ", "  Puzzle  ", "  Solver  ", "  Debug  "
+  };
+  fl_font(FL_HELVETICA, MAIN_TAB_LABELSIZE);
+  int total = 0;
+  for (const char *lab : labels)
+    total += (int)fl_width(lab) + 8;
+  if (total < 360)
+    total = 360;
+  return total + 25;
+}
+
+/* Vertical scroll around a tab's left-bar tile. The content keeps its
+ * preferred height; when the window is shorter, a scrollbar appears
+ * instead of squashing the controls. */
+static LFl_Scroll * makeTabScroll(void) {
+  const int barW = leftBarWidth();
+  LFl_Scroll * s = new LFl_Scroll(0, 0, 1, 1);
+  s->type(Fl_Scroll::VERTICAL);
+  s->box(FL_FLAT_BOX);
+  s->color(FL_BACKGROUND_COLOR);
+  s->weight(1, 1);
+  s->setMinimumSize(barW, 140);
+  s->setShrinkMinSize(barW, 140);
+  return s;
+}
 
 void mainWindow_c::CreateShapeTab(void) {
 
@@ -4264,8 +4294,11 @@ void mainWindow_c::CreateShapeTab(void) {
   TabPieces->tooltip("Edit shapes");
   TabPieces->clear_visible_focus();
 
+  LFl_Scroll * scroll = makeTabScroll();
+
   LFl_Tile * tile = new LFl_Tile(0, 0, 1, 1);
   tile->pitch(SZ_GAP);
+  tile->weight(1, 1);
 
   {
     layouter_c * group = new layouter_c(0, 0);
@@ -4471,7 +4504,7 @@ void mainWindow_c::CreateShapeTab(void) {
 
   tile->end();
 
-  TabPieces->resizable(tile);
+  TabPieces->resizable(scroll);
   TabPieces->end();
 
   Fl_Group::current()->resizable(TabPieces);
@@ -4486,8 +4519,11 @@ void mainWindow_c::CreateProblemTab(void) {
   TabProblems->hide();
   TabProblems->clear_visible_focus();
 
+  LFl_Scroll * scroll = makeTabScroll();
+
   LFl_Tile * tile = new LFl_Tile(0, 0, 1, 1);
   tile->pitch(SZ_GAP);
+  tile->weight(1, 1);
 
   {
     layouter_c * group = new layouter_c(0, 0);
@@ -4666,7 +4702,7 @@ void mainWindow_c::CreateProblemTab(void) {
 
   tile->end();
 
-  TabProblems->resizable(tile);
+  TabProblems->resizable(scroll);
   TabProblems->end();
 }
 
@@ -4706,9 +4742,12 @@ void mainWindow_c::CreateSolveTab(void) {
   TabSolve->hide();
   TabSolve->clear_visible_focus();
 
+  LFl_Scroll * scroll = makeTabScroll();
+
   LFl_Tile * tile = new LFl_Tile(0, 0, 1, 1);
   tile->pitch(SZ_GAP);
-  solverPane = tile;
+  tile->weight(1, 1);
+  solverPane = scroll;
 
   {
     layouter_c * group = new layouter_c(0, 0);
@@ -4763,8 +4802,10 @@ void mainWindow_c::CreateSolveTab(void) {
     LFl_Box * solverTypeCaption = new LFl_Box("Solver Type: ", 0, 0, 1, 1);
     solverTypeCaption->tooltip(solverTypeTooltip());
 
-    solverTypeChoice = new LFl_Choice(1, 0, 1, 1);
-    ((LFl_Choice*)solverTypeChoice)->weight(1, 0);
+    LFl_Choice * solverType = new LFl_Choice(1, 0, 1, 1);
+    solverTypeChoice = solverType;
+    solverType->weight(1, 0);
+    solverType->setMinimumSize(0, 25);
     solverTypeChoice->tooltip(solverTypeTooltip());
     for (unsigned int i = 0; i < solverTypeCount(); i++)
       solverTypeChoice->add(solverTypeLabel((solverType_e)i));
@@ -4775,12 +4816,15 @@ void mainWindow_c::CreateSolveTab(void) {
     solverTypeHelp->callback(cb_SolverTypeHelp_stub, this);
     solverTypeHelp->stretchVCenter();
     solverTypeHelp->setPadding(10, 4);
+    solverTypeHelp->setMinimumSize(0, 25);
 
     LFl_Box * sortByLabel = new LFl_Box("Sort by: ", 0, 1, 1, 1);
     sortByLabel->tooltip(" Set before solving to order saved solutions. Click ? for an explanation of each option. ");
 
-    sortMethod = new LFl_Choice(1, 1, 1, 1);
-    ((LFl_Choice*)sortMethod)->weight(1, 0);
+    LFl_Choice * sortBy = new LFl_Choice(1, 1, 1, 1);
+    sortMethod = sortBy;
+    sortBy->weight(1, 0);
+    sortBy->setMinimumSize(0, 25);
     sortMethod->tooltip(" Set before solving to order saved solutions. Click ? for an explanation of each option. ");
 
     // be careful the order in here must correspond with the enumeration in assembler thread
@@ -4797,6 +4841,7 @@ void mainWindow_c::CreateSolveTab(void) {
     sortByHelp->callback(cb_SortByHelp_stub, this);
     sortByHelp->stretchVCenter();
     sortByHelp->setPadding(10, 4);
+    sortByHelp->setMinimumSize(0, 25);
 
     o->end();
 
@@ -5153,7 +5198,7 @@ void mainWindow_c::CreateSolveTab(void) {
   }
   tile->end();
 
-  TabSolve->resizable(tile);
+  TabSolve->resizable(scroll);
   TabSolve->end();
 }
 
@@ -5348,14 +5393,16 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
    * panel Update/Revert row can stay in the visible window. */
   contentRow->setShrinkMinSize(0, notesButtonsFloorH);
 
-  LFl_Tile * mainTile = new LFl_Tile(0, 0, 1, 1);
+  /* Regular layouter, not a tile: the left bar stays at the tab-header
+   * width and cannot be dragged horizontally. Extra width goes to the 3D view. */
+  layouter_c * mainTile = new layouter_c(0, 0, 1, 1);
   mainTile->weight(1, 1);
 
   static const int VIEW3D_MIN = 400;
   static const int VIEW3D_SHRINK_MIN = VIEW3D_MIN * 3 / 10;
 
   rightPane = new LFl_Tile(1, 0, 1, 1);
-  rightPane->weight(1, 0);
+  rightPane->weight(1, 1);
   rightPane->setMinimumSize(VIEW3D_MIN, VIEW3D_MIN);
   rightPane->setShrinkMinSize(VIEW3D_SHRINK_MIN, 0);
   rightPane->shrinkPrio(0, 128);
@@ -5391,10 +5438,15 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   (new LFl_Box(0, 0, 1, 1))->color(FL_BACKGROUND_COLOR);
 
   // the tab for the tool bar
-  TaskSelectionTab = new LFl_Tabs(0, 0, 1, 1);
-  TaskSelectionTab->callback(cb_TaskSelectionTab_stub, this);
-  TaskSelectionTab->labelsize(MAIN_TAB_LABELSIZE);
-  TaskSelectionTab->clear_visible_focus();
+  const int barW = leftBarWidth();
+  LFl_Tabs * tabs = new LFl_Tabs(0, 0, 1, 1);
+  TaskSelectionTab = tabs;
+  tabs->callback(cb_TaskSelectionTab_stub, this);
+  tabs->labelsize(MAIN_TAB_LABELSIZE);
+  tabs->clear_visible_focus();
+  tabs->weight(0, 1);
+  tabs->setMinimumSize(barW, 140);
+  tabs->setShrinkMinSize(barW, 140);
 
   // the three tabs
   CreateShapeTab();
@@ -5471,7 +5523,17 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   ViewSizes[1] = -1;
   ViewSizes[2] = -1;
 
-  resize(config.windowPosX(), config.windowPosY(), config.windowPosW(), config.windowPosH());
+  /* Saved size is restored, but a previous session may have left a tiny
+   * window. Floor at the default so the app does not open cramped. */
+  static const int DEFAULT_WINDOW_W = 1200;
+  static const int DEFAULT_WINDOW_H = 800;
+  int ww = config.windowPosW();
+  int wh = config.windowPosH();
+  if (ww < DEFAULT_WINDOW_W)
+    ww = DEFAULT_WINDOW_W;
+  if (wh < DEFAULT_WINDOW_H)
+    wh = DEFAULT_WINDOW_H;
+  resize(config.windowPosX(), config.windowPosY(), ww, wh);
 
   if (!config.useRubberband())
     editMode->select(1);

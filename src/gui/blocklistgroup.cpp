@@ -71,6 +71,11 @@ int LBlockListGroup_c::handle(int event) {
 
 LBlockListGroup_c::LBlockListGroup_c(int x, int y, int w, int h, BlockList * l) : Fl_Group(0, 0, 100, 100), layoutable_c(x, y, w, h), Slider(nullptr), List(l), callbackReason(0) {
 
+  /* Preferred height stays large enough to use. The panel may shrink
+   * the list further before a scrollbar appears. */
+  setShrinkMinSize(30, 40);
+  shrinkPrio(128, 0);
+
   box(FL_DOWN_FRAME);
 
   x = y = 0;

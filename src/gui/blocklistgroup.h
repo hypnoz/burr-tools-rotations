@@ -46,7 +46,7 @@ class LBlockListGroup_c : public Fl_Group, public layoutable_c {
 
   virtual void getMinSize(int *width, int *height) const {
     *width = 30;
-    *height = 20;
+    *height = 80;
   }
 };
 

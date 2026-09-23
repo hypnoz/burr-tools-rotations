@@ -99,11 +99,14 @@ void platform::applyLookAndFeel(void) {
   Fl::scheme("oxy");
 
 #ifdef __APPLE__
-  /* Render labels in the system UI font (SF Pro) rather than Helvetica, and
-   * match the 13pt macOS control text size rather than FLTK's 14.
+  /* Render labels in the system UI font (SF Pro) rather than Helvetica.
+   * 15pt is two points above the previous 13pt control text size.
    */
   Fl::set_font(FL_HELVETICA, ".AppleSystemUIFont");
-  FL_NORMAL_SIZE = 13;
+  FL_NORMAL_SIZE = 15;
+#else
+  /* FLTK's default is 14; raise every inherited label by two points. */
+  FL_NORMAL_SIZE = 16;
 #endif
 
   Fl::get_system_colors();

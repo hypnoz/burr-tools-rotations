@@ -636,6 +636,11 @@ void LFl_Tabs::getMinSize(int *width, int *height) const {
   }
 
   *height += tabStripHeight();
+
+  if (getMinWidth() > *width)
+    *width = getMinWidth();
+  if (getMinHeight() > *height)
+    *height = getMinHeight();
 }
 
 void LFl_Tabs::resize(int x, int y, int w, int h) {
@@ -662,9 +667,10 @@ void LFl_Tabs::resize(int x, int y, int w, int h) {
 
 void LFl_Scroll::getMinSize(int *width, int *height) const {
 
-  /* Report the viewport size, not the content size. Using the full table
-   * width here made the scroll widget wider than the pane, so the vertical
-   * scrollbar (drawn on the right edge) was clipped away. */
+  /* Report the viewport size, not the content size, unless the caller
+   * set an explicit minimum. Using the full table width here made the
+   * scroll widget wider than the pane, so the vertical scrollbar (drawn
+   * on the right edge) was clipped away. */
   int sb = scrollbar_size();
   if (sb < 1)
     sb = Fl::scrollbar_size();
@@ -689,17 +695,134 @@ void LFl_Scroll::getMinSize(int *width, int *height) const {
       *height = 56;
       break;
   }
+
+  if (getMinWidth() > *width)
+    *width = getMinWidth();
+  if (getMinHeight() > *height)
+    *height = getMinHeight();
 }
 
 void LFl_Scroll::resize(int x, int y, int w, int h) {
 
-  int lw, lh;
+  /* Same viewport: do not relayout. Fl_Scroll moves `lay` when the
+   * user scrolls; rebuilding it here would snap the content back. */
+  if (x == this->x() && y == this->y() && w == this->w() && h == this->h())
+    return;
 
-  lay->getMinSize(&lw, &lh);
+  int prefW, prefH;
+  lay->getMinSize(&prefW, &prefH);
+  int floorH = 0;
+  {
+    int floorW = 0;
+    lay->getShrinkMinSize(&floorW, &floorH);
+  }
+  if (floorH < 1)
+    floorH = 1;
+  if (floorH > prefH)
+    floorH = prefH;
 
-  lay->resize(lay->x(), lay->y(), lw, lh);
+  int sb = scrollbar_size();
+  if (sb < 1)
+    sb = Fl::scrollbar_size();
+  if (sb < 12)
+    sb = 12;
 
-  Fl_Scroll::resize(x, y, w, h);
+  const int frameH = h - Fl::box_dh(box());
+  const int frameW = w - Fl::box_dw(box());
+  /* Scroll only once the panel is shorter than the shrink floor.
+   * Above that, the controls grow and shrink so everything stays visible. */
+  const bool needV = frameH < floorH;
+
+  int innerW = needV ? frameW - sb : frameW;
+  if (innerW < 1)
+    innerW = 1;
+
+  int lh = frameH;
+  if (lh < floorH)
+    lh = floorH;
+
+  int lw = prefW;
+  if (lw < innerW)
+    lw = innerW;
+
+  if (!needV && (xposition() != 0 || yposition() != 0))
+    scroll_to(0, 0);
+
+  const int ox = xposition();
+  const int oy = yposition();
+  const int ix = x + Fl::box_dx(box());
+  const int iy = y + Fl::box_dy(box());
+  lay->resize(ix - ox, iy - oy, lw, lh);
+
+  /* Fl_Scroll::resize() shifts every child by the widget's own movement.
+   * The content was just placed in final coordinates, so that shift would
+   * push it outside the viewport and the vertical bar would never hide.
+   */
+  Fl_Widget::resize(x, y, w, h);
+  redraw();
+}
+
+int LFl_Scroll::handle(int event) {
+
+  const int ox = xposition();
+  const int oy = yposition();
+  const int r = Fl_Scroll::handle(event);
+  /* Fl_Scroll blits old pixels (FL_DAMAGE_SCROLL). Force a full draw
+   * so the custom path below repaints every child in the viewport. */
+  if (xposition() != ox || yposition() != oy)
+    damage(FL_DAMAGE_ALL);
+  return r;
+}
+
+void LFl_Scroll::draw() {
+
+  int X, Y, W, H;
+  bbox(X, Y, W, H);
+
+  draw_box();
+
+  /* Paint the viewport, then the content child. Do not call
+   * Fl_Scroll::draw(): that copies old pixels for FL_DAMAGE_SCROLL.
+   * Scrollbar geometry normally lives in that draw, so place the bars
+   * here or they stay at the size they were constructed with. */
+  fl_push_clip(X, Y, W, H);
+  fl_color(color());
+  fl_rectf(X, Y, W, H);
+
+  if (lay && lay->visible()) {
+    lay->clear_damage(FL_DAMAGE_ALL);
+    draw_child(*lay);
+    draw_outside_label(*lay);
+  }
+  fl_pop_clip();
+
+  ScrollInfo si;
+  recalc_scrollbars(si);
+
+  if (si.vneeded)
+    scrollbar.show();
+  else
+    scrollbar.hide();
+  if (si.hneeded)
+    hscrollbar.show();
+  else
+    hscrollbar.hide();
+
+  scrollbar.resize(si.vscroll.x, si.vscroll.y, si.vscroll.w, si.vscroll.h);
+  scrollbar.value(si.vscroll.pos, si.vscroll.size, si.vscroll.first, si.vscroll.total);
+
+  hscrollbar.resize(si.hscroll.x, si.hscroll.y, si.hscroll.w, si.hscroll.h);
+  hscrollbar.value(si.hscroll.pos, si.hscroll.size, si.hscroll.first, si.hscroll.total);
+
+  scrollbar.clear_damage(FL_DAMAGE_ALL);
+  hscrollbar.clear_damage(FL_DAMAGE_ALL);
+  draw_child(scrollbar);
+  draw_child(hscrollbar);
+
+  if (scrollbar.visible() && hscrollbar.visible()) {
+    fl_color(color());
+    fl_rectf(scrollbar.x(), hscrollbar.y(), scrollbar.w(), hscrollbar.h());
+  }
 }
 
 void LFl_Double_Window::show(void) {

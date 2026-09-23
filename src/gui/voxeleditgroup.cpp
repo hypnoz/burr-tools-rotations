@@ -82,6 +82,9 @@ static void cb_VoxelEditGroupSqedit_stub(Fl_Widget* /*o*/, void* v) { static_cas
 
 VoxelEditGroup_c::VoxelEditGroup_c(int x, int y, int w, int h, puzzle_c * puzzle, const guiGridType_c * ggt) : Fl_Group(0, 0, 300, 300), layoutable_c(x, y, w, h) {
 
+  setShrinkMinSize(40, 80);
+  shrinkPrio(128, 0);
+
   x = 0;
   y = 0;
   w = 300;

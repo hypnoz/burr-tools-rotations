@@ -135,8 +135,8 @@ configuration_c::configuration_c(void) {
   CNF_INT("renderstyle",          &i_render_style, "0");
   CNF_INT("windowposx",           &i_window_pos_x, "30");
   CNF_INT("windowposy",           &i_window_pos_y, "30");
-  CNF_INT("windowposw",           &i_window_pos_w, "800");
-  CNF_INT("windowposh",           &i_window_pos_h, "600");
+  CNF_INT("windowposw",           &i_window_pos_w, "1200");
+  CNF_INT("windowposh",           &i_window_pos_h, "800");
 
   parse();
 }

@@ -13,8 +13,8 @@
 
 namespace {
 
-const int kTitleSize = 18;
-const int kBodySize = 16;
+const int kTitleSize = 20;
+const int kBodySize = 18;
 const int kTabStop = 40;
 
 void formatDuration(char *buf, size_t len, unsigned long long ms) {

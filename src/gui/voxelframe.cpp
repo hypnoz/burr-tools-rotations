@@ -819,7 +819,7 @@ void voxelFrame_c::drawVoxelSpace() {
 
           glDisable(GL_DEPTH_TEST);
           glDisable(GL_TEXTURE_2D);
-          gl_font(FL_HELVETICA_BOLD, 16);
+          gl_font(FL_HELVETICA_BOLD, 18);
 
           glMatrixMode(GL_PROJECTION);
           glPushMatrix();
@@ -1881,9 +1881,9 @@ void voxelFrame_c::drawDebugRotationLegend() {
   /* Text must use gl_draw — fl_draw does not paint into Fl_Gl_Window. */
   glDisable(GL_TEXTURE_2D);
   glColor3f(1.0f, 1.0f, 1.0f);
-  gl_font(FL_HELVETICA_BOLD, 12);
-  gl_draw("Rotation debug", boxX + pad, boxY + pad + 12);
-  gl_font(FL_HELVETICA, 11);
+  gl_font(FL_HELVETICA_BOLD, 14);
+  gl_draw("Rotation debug", boxX + pad, boxY + pad + 14);
+  gl_font(FL_HELVETICA, 13);
   gl_draw("Cyan: arc sweep clearance", textX, row1Y + swatch - 1);
   gl_draw("Yellow: axis-cross slot (empty)", textX, row2Y + swatch - 1);
   gl_draw("Magenta: hard conflict", textX, row3Y + swatch - 1);

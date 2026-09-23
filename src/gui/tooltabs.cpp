@@ -104,7 +104,7 @@ public:
 
 #define SZ_BUTTON_Y 20
 #define SZ_BUTTON2_Y 25
-#define LABEL_FONT_SIZE 12
+#define LABEL_FONT_SIZE 14
 
 static void cb_TransformButtons_stub(Fl_Widget* o, long v) { static_cast<TransformButtons*>(o->parent()->parent())->cb_Press(v); }
 
