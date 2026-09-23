@@ -104,12 +104,18 @@ void solveThread_c::run(void){
 
   try {
 
+    /* local pointer for this thread's own use; the shared member `assm` is
+     * only written (published) here and read by the GUI thread
+     */
+    assembler_c * a = 0;
+
     /* first check, if there is an assembler available with the
      * problem, if there is one take that
      */
     if (puzzle.getAssembler()) {
-      assm = puzzle.getAssembler();
-      assm->applySolutionFilterFlags(parameters & PAR_KEEP_MIRROR, parameters & PAR_KEEP_ROTATIONS, parameters & PAR_COMPLETE_ROTATIONS);
+      a = puzzle.getAssembler();
+      assm.store(a, std::memory_order_release);
+      a->applySolutionFilterFlags(parameters & PAR_KEEP_MIRROR, parameters & PAR_KEEP_ROTATIONS, parameters & PAR_COMPLETE_ROTATIONS);
     }
     else {
 
@@ -118,25 +124,26 @@ void solveThread_c::run(void){
       action.store(ACT_PREPARATION, std::memory_order_relaxed);
       statsPhase = PHASE_PREPARE;
       phaseOrigin = std::chrono::steady_clock::now();
-      assm = puzzle.getPuzzle().getGridType()->findAssembler(puzzle, false, solverType);
+      a = puzzle.getPuzzle().getGridType()->findAssembler(puzzle, false, solverType);
+      assm.store(a, std::memory_order_release);
 
-      errState = assm->createMatrix(parameters & PAR_KEEP_MIRROR, parameters & PAR_KEEP_ROTATIONS, parameters & PAR_COMPLETE_ROTATIONS);
+      errState = a->createMatrix(parameters & PAR_KEEP_MIRROR, parameters & PAR_KEEP_ROTATIONS, parameters & PAR_COMPLETE_ROTATIONS);
       prepareMs.store(elapsedMs(phaseOrigin), std::memory_order_relaxed);
       statsPhase = PHASE_NONE;
       if (errState != assembler_c::ERR_NONE) {
 
-        errParam = assm->getErrorsParam();
+        errParam = a->getErrorsParam();
 
         action.store(ACT_ERROR, std::memory_order_relaxed);
 
-        delete assm;
-        assm = 0;
+        assm.store(0, std::memory_order_release);
+        delete a;
         return;
       }
 
       if (stopPressed.load(std::memory_order_relaxed)) {
-        delete assm;
-        assm = 0;
+        assm.store(0, std::memory_order_release);
+        delete a;
         action.store(ACT_PAUSING, std::memory_order_relaxed);
         return;
       }
@@ -149,7 +156,7 @@ void solveThread_c::run(void){
         statsPhase = PHASE_REDUCE;
         phaseOrigin = std::chrono::steady_clock::now();
         if (!stopPressed.load(std::memory_order_relaxed))
-          assm->reduce();
+          a->reduce();
         reduceMs.store(elapsedMs(phaseOrigin), std::memory_order_relaxed);
         statsPhase = PHASE_NONE;
       }
@@ -164,11 +171,11 @@ void solveThread_c::run(void){
        * also restores the assembler state to a state that might
        * be saved within the problem
        */
-      errState = puzzle.setAssembler(assm);
+      errState = puzzle.setAssembler(a);
       if (errState != assembler_c::ERR_NONE) {
         action.store(ACT_ERROR, std::memory_order_relaxed);
-        delete assm;
-        assm = 0;
+        assm.store(0, std::memory_order_release);
+        delete a;
         return;
       }
     }
@@ -188,10 +195,10 @@ void solveThread_c::run(void){
       phaseOrigin = std::chrono::steady_clock::now();
       if (solverType == SOLVER_BT2) {
         assemblerThreadCount = bt2ChooseAssemblerWorkers();
-        assemblerThreadCount = bt2Assemble(assm, this, assemblerThreadCount);
+        assemblerThreadCount = bt2Assemble(a, this, assemblerThreadCount);
       } else {
         assemblerThreadCount = 1;
-        assm->assemble(this);
+        a->assemble(this);
       }
       assemblyMs.store(elapsedMs(phaseOrigin), std::memory_order_relaxed);
       statsPhase = PHASE_NONE;
@@ -208,7 +215,7 @@ void solveThread_c::run(void){
 
       if (stopPressed.load(std::memory_order_relaxed))
         action.store(ACT_PAUSING, std::memory_order_relaxed);
-      else if (assm->getFinished() >= 1) {
+      else if (a->getFinished() >= 1) {
         action.store(ACT_FINISHED, std::memory_order_relaxed);
         puzzle.finishedSolving();
       } else
@@ -236,6 +243,7 @@ puzzle(puz),
 parameters(par),
 sortMethod(SRT_COMPLETE_MOVES),
 solverType(SOLVER_CLASSIC),
+liveSort(-1),
 solutionLimit(10),
 solutionDrop(1),
 stopPressed(false),
@@ -573,7 +581,20 @@ void solveThread_c::processDisassembly(const disasmTask_c & task, int _solutionA
     }
   }
 
+  applyLiveSort();
+
   puzzle.incNumSolutions();
+}
+
+void solveThread_c::applyLiveSort(void) {
+
+  /* keep the list sorted by the method the user picked in the GUI, if any, so
+   * the sort stays applied as new solutions arrive. The list is bounded by the
+   * solution limit, so this is cheap. sortSolutions locks the list itself.
+   */
+  int ls = liveSort.load(std::memory_order_relaxed);
+  if (ls >= 0 && puzzle.getNumberOfSavedSolutions() >= 2)
+    puzzle.sortSolutions(ls);
 }
 
 void solveThread_c::trimSavedSolutions(int _solutionAction) {
@@ -644,6 +665,7 @@ bool solveThread_c::assembly(assembly_c * a) {
 
   puzzle.incNumAssemblies();
   trimSavedSolutions(_solutionAction);
+  applyLiveSort();
 
   return true;
 }
@@ -708,10 +730,13 @@ unsigned int solveThread_c::currentActionParameter(void) {
   switch(action.load(std::memory_order_relaxed)) {
   case ACT_REDUCE:
   case ACT_PREPARATION:
-    if (assm)
-      return assm->getReducePiece();
-    else
-      return 0;
+    {
+      assembler_c * a = assm.load(std::memory_order_acquire);
+      if (a)
+        return a->getReducePiece();
+      else
+        return 0;
+    }
 
   default:
     return 0;
@@ -867,9 +892,9 @@ solveStats_c solveThread_c::getStats(void) const {
   s.disasmWorkMs = disasmMsTotal.load(std::memory_order_relaxed);
   s.avgDisasmSeconds = getAverageDisassemblySeconds();
 
-  if (assm) {
-    s.dlxIterations = assm->getIterations();
-    s.assemblyProgress = assm->getFinished();
+  if (assembler_c * a = assm.load(std::memory_order_acquire)) {
+    s.dlxIterations = a->getIterations();
+    s.assemblyProgress = a->getFinished();
   }
 
   unsigned long long extra = 0;

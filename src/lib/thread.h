@@ -22,6 +22,7 @@
 #define __THREAD_H__
 
 #include <thread>
+#include <atomic>
 
 /* this class encapsulates a single thread */
 class thread_c {
@@ -30,7 +31,10 @@ class thread_c {
 
     std::thread t;  // our thread
 
-    bool running;
+    /* read from the controlling (GUI) thread via isRunning() while the worker
+     * sets it in start_thread(); must be atomic
+     */
+    std::atomic<bool> running;
     bool joined;
 
   protected:

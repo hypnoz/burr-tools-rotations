@@ -404,6 +404,17 @@ public:
   };
 
   /**
+   * Acquire the lock guarding the solution list. A caller that reads a saved
+   * solution while the solver thread might be running must hold this across
+   * the whole read (and any copy it makes of the solution), so the solver can
+   * not delete or reallocate the list underneath it. Returns a movable RAII
+   * lock; keep it alive for the duration of the access.
+   */
+  std::unique_lock<std::recursive_mutex> lockSolutions(void) const {
+    return std::unique_lock<std::recursive_mutex>(solutionsMutex);
+  }
+
+  /**
    * remove all known solutions, reset time, counter, assembler.
    * prepare for solving the problem
    * it also removes maybe saved assembler state so that solving starts

@@ -201,7 +201,16 @@ class solveThread_c : public assembler_cb, public thread_c {
     void setSolverType(solverType_e type) { solverType = type; }
     solverType_e getSolverType(void) const { return solverType; }
 
+    /* If >= 0, the worker keeps the (limit-bounded) solution list sorted by
+     * this problem_c::sortSolutions method after every solution it adds, so a
+     * sort chosen in the GUI stays applied as new solutions arrive. -1 = off.
+     * Atomic: set from the GUI thread, read by the worker.
+     */
+    void setLiveSort(int method) { liveSort.store(method, std::memory_order_relaxed); }
+
   private:
+
+    std::atomic<int> liveSort;
 
     /* don't save more than this number of solutions 0 means no limit */
     unsigned int solutionLimit;
@@ -238,7 +247,13 @@ class solveThread_c : public assembler_cb, public thread_c {
                              // if this flag is set, the program will return
 
     std::vector<disassembler_c *> disassemblers;
-    assembler_c * assm;
+
+    /* the worker publishes the assembler here once it is fully constructed so
+     * that currentActionParameter() and getStats(), called from the GUI thread,
+     * can query its progress. Atomic with release/acquire so the GUI never sees
+     * a half-constructed object (which would be a vptr race on the virtual call).
+     */
+    std::atomic<assembler_c *> assm;
     unsigned int assemblerThreadCount;
 
     std::mutex assemblyCallbackMutex;
@@ -278,6 +293,7 @@ class solveThread_c : public assembler_cb, public thread_c {
     unsigned int findInsertIndexByMoves(unsigned int lev) const;
     unsigned int findInsertIndexByRotations(unsigned int lev) const;
     void trimSavedSolutions(int solutionAction);
+    void applyLiveSort(void);
 
 public:
 
