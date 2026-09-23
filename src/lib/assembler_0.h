@@ -36,6 +36,7 @@
 
 class gridType_c;
 class mirrorInfo_c;
+class ISimdExactCover;
 
 /**
  * This is an assembler class.
@@ -247,6 +248,9 @@ private:
 
   void generateSubtreeTasks(std::vector<SubtreeTask> & tasks, unsigned int targetTasks, unsigned int maxDepth);
   void parallelMultiSearch(unsigned int workers);
+  bool canUseSimd(void) const;
+  void simdSearch(void);
+  std::unique_ptr<ISimdExactCover> createSimdSolver(void) const;
 
 protected:
 

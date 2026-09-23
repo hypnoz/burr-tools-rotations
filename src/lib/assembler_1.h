@@ -37,6 +37,7 @@
 class problem_c;
 class gridType_c;
 class mirrorInfo_c;
+class ISimdHuangCover;
 
 /**
  * This class is an assembler class.
@@ -108,6 +109,9 @@ private:
   void generateTasksAtDepth(unsigned int cutoff_depth, std::vector<SubtreeTask_1> & tasks);
   void generateSubtreeTasks(std::vector<SubtreeTask_1> & tasks, unsigned int targetTasks, unsigned int maxDepth);
   void parallelMultiSearch(unsigned int workers);
+  bool canUseSimd(void) const;
+  void simdSearch(void);
+  std::unique_ptr<ISimdHuangCover> createSimdSolver(void) const;
 
   friend class assemblerWorker_1;
 
@@ -120,6 +124,8 @@ private:
    * saved as not resumable -- see assembler_1.cpp
    */
   bool parallelInterrupted = false;
+  /* set when simdSearch() ran to completion. */
+  bool simdCompleted = false;
 
   std::vector<unsigned int> base_left;
   std::vector<unsigned int> base_right;

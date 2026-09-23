@@ -26,6 +26,7 @@
 #include "voxel.h"
 #include "assembly.h"
 #include "gridtype.h"
+#include "simd_huang_cover.h"
 
 #include "../tools/xml.h"
 
@@ -2654,6 +2655,130 @@ void assembler_1_c::parallelMultiSearch(unsigned int workers) {
   running.store(false, std::memory_order_relaxed);
 }
 
+bool assembler_1_c::canUseSimd(void) const {
+  if (task_stack.size() != 1 || !rows.empty() || next_row_stack.size() != 1)
+    return false;
+  if (std::getenv("BURRTOOLS_NO_SIMD"))
+    return false;
+  if (debug)
+    return false;
+
+  if (headerNodes - 1 > 32768)
+    return false;
+
+  const voxel_c * result = getResultShape(problem);
+  unsigned int num_cols = headerNodes - 1;
+  unsigned int num_shapes = problem.getNumberOfParts();
+  unsigned int res_filled = result ? result->countState(voxel_c::VX_FILLED) : 0;
+  unsigned int res_vari = result ? result->countState(voxel_c::VX_VARIABLE) : 0;
+  bool hasRange = (num_cols == (num_shapes + res_filled + res_vari + 1));
+  if (hasRange)
+    return false;
+
+  if (res_vari > 0) {
+    for (unsigned int s = 0; s < problem.getNumberOfParts(); s++) {
+      if (problem.getPartMinimum(s) != problem.getPartMaximum(s))
+        return false;
+    }
+  }
+
+  return true;
+}
+
+std::unique_ptr<ISimdHuangCover> assembler_1_c::createSimdSolver(void) const {
+  const voxel_c * result = getResultShape(problem);
+  unsigned int num_cols = headerNodes - 1;
+  unsigned int num_shapes = problem.getNumberOfParts();
+  unsigned int res_filled = result->countState(voxel_c::VX_FILLED);
+  unsigned int res_vari = result->countState(voxel_c::VX_VARIABLE);
+  bool hasRange = (num_cols == (num_shapes + res_filled + res_vari + 1));
+  unsigned int rangeColumn = hasRange ? num_cols : 0;
+
+  std::unique_ptr<ISimdHuangCover> solver;
+  if (num_cols <= 256) {
+    solver = std::make_unique<SimdHuangCover256>(num_cols, num_shapes);
+  } else if (num_cols <= 512) {
+    solver = std::make_unique<SimdHuangCover512>(num_cols, num_shapes);
+  } else if (num_cols <= 1024) {
+    solver = std::make_unique<SimdHuangCover1024>(num_cols, num_shapes);
+  } else if (num_cols <= 2048) {
+    solver = std::make_unique<SimdHuangCover2048>(num_cols, num_shapes);
+  } else if (num_cols <= 4096) {
+    solver = std::make_unique<SimdHuangCover4096>(num_cols, num_shapes);
+  } else if (num_cols <= 8192) {
+    solver = std::make_unique<SimdHuangCover8192>(num_cols, num_shapes);
+  } else if (num_cols <= 16384) {
+    solver = std::make_unique<SimdHuangCover16384>(num_cols, num_shapes);
+  } else {
+    solver = std::make_unique<SimdHuangCover32768>(num_cols, num_shapes);
+  }
+  solver->setHoles(holes);
+
+  for (unsigned int c = 1; c <= num_cols; c++) {
+    bool is_shape = (c <= num_shapes);
+    bool is_range = (hasRange && c == rangeColumn);
+    bool is_voxel = (!is_shape && !is_range);
+    bool is_hole = false;
+    for (unsigned int hc : holeColumns) {
+      if (hc == c) {
+        is_hole = true;
+        break;
+      }
+    }
+    solver->setColumnBounds(c, min[c], max[c], is_voxel, is_shape, is_range, is_hole);
+  }
+
+  for (unsigned int pc = 0; pc < num_shapes; pc++) {
+    unsigned int shape_col = pc + 1;
+    unsigned int shape_row_idx = 0;
+    for (int r = down[shape_col]; r != (int)shape_col; r = down[r]) {
+      std::vector<unsigned int> cols;
+      std::vector<unsigned int> weights;
+      std::vector<unsigned int> nodes_in_row;
+      unsigned int curr = r;
+      unsigned int range_w = 0;
+      do {
+        nodes_in_row.push_back(curr);
+        unsigned int col = colCount[curr];
+        unsigned int w = weight[curr];
+        cols.push_back(col);
+        weights.push_back(w);
+        if (hasRange && col == rangeColumn) {
+          range_w = w;
+        }
+        curr = right[curr];
+      } while (curr != (unsigned int)r);
+
+      uint32_t row_idx = solver->addRow(r, pc, shape_col, shape_row_idx++, range_w, cols, weights);
+      for (unsigned int n : nodes_in_row) {
+        solver->registerNodeAlias(n, row_idx);
+      }
+    }
+  }
+
+  return solver;
+}
+
+void assembler_1_c::simdSearch(void) {
+  running.store(true, std::memory_order_relaxed);
+  abbort.store(false, std::memory_order_relaxed);
+
+  auto solver = createSimdSolver();
+  std::atomic<uint64_t> simd_iter{0};
+
+  solver->solve([this](const std::vector<unsigned int> &solution_nodes) -> bool {
+    rows = solution_nodes;
+    solution();
+    return !abbort.load(std::memory_order_relaxed);
+  }, abbort, simd_iter);
+
+  iterations.fetch_add(simd_iter.load(std::memory_order_relaxed), std::memory_order_relaxed);
+
+  parallelInterrupted = abbort.load(std::memory_order_relaxed);
+  simdCompleted = !parallelInterrupted;
+
+  running.store(false, std::memory_order_relaxed);
+}
 
 void assembler_1_c::assemble(assembler_cb * callback) {
 
@@ -2684,6 +2809,8 @@ void assembler_1_c::assemble(assembler_cb * callback) {
       unsigned int threads = getEffectiveThreads();
       if (task_stack.size() == 1 && rows.empty() && next_row_stack.size() == 1 && threads > 1) {
         parallelMultiSearch(threads);
+      } else if (canUseSimd()) {
+        simdSearch();
       } else {
         iterative();
       }

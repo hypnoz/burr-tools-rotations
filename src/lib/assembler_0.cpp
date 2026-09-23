@@ -26,6 +26,7 @@
 #include "voxel.h"
 #include "assembly.h"
 #include "gridtype.h"
+#include "simd_exact_cover.h"
 
 #include "../tools/xml.h"
 
@@ -1870,6 +1871,107 @@ void assembler_0_c::parallelMultiSearch(unsigned int workers) {
   running.store(false, std::memory_order_relaxed);
 }
 
+bool assembler_0_c::canUseSimd(void) const {
+  if (pos != 0)
+    return false;
+  if (std::getenv("BURRTOOLS_NO_SIMD"))
+    return false;
+  if (debug)
+    return false;
+  if (holes > 0)
+    return false;
+
+  int res_vari = getResultShape(problem)->countState(voxel_c::VX_VARIABLE);
+  if (res_vari > 0)
+    return false;
+
+  int res_filled = getResultShape(problem)->countState(voxel_c::VX_FILLED);
+  unsigned int max_col = piecenumber + res_filled;
+  if (max_col > 2048)
+    return false;
+
+  return true;
+}
+
+std::unique_ptr<ISimdExactCover> assembler_0_c::createSimdSolver(void) const {
+  int res_filled = getResultShape(problem)->countState(voxel_c::VX_FILLED);
+  unsigned int max_col = piecenumber + res_filled;
+
+  std::unique_ptr<ISimdExactCover> solver;
+  if (max_col <= 256) {
+    solver = std::make_unique<SimdExactCover256>(max_col, piecenumber);
+  } else if (max_col <= 512) {
+    solver = std::make_unique<SimdExactCover512>(max_col, piecenumber);
+  } else if (max_col <= 1024) {
+    solver = std::make_unique<SimdExactCover1024>(max_col, piecenumber);
+  } else if (max_col <= 2048) {
+    solver = std::make_unique<SimdExactCover2048>(max_col, piecenumber);
+  } else if (max_col <= 4096) {
+    solver = std::make_unique<SimdExactCover4096>(max_col, piecenumber);
+  } else if (max_col <= 8192) {
+    solver = std::make_unique<SimdExactCover8192>(max_col, piecenumber);
+  } else if (max_col <= 16384) {
+    solver = std::make_unique<SimdExactCover16384>(max_col, piecenumber);
+  } else {
+    solver = std::make_unique<SimdExactCover32768>(max_col, piecenumber);
+  }
+
+  for (unsigned int c = right[0]; c != 0; c = right[c]) {
+    if (c <= max_col) {
+      solver->setRequiredColumn(c - 1);
+    }
+  }
+
+  for (unsigned int p = 1; p <= piecenumber; p++) {
+    for (unsigned int row = down(p); row != p; row = down(row)) {
+      std::vector<unsigned int> cols;
+      std::vector<unsigned int> nodes_in_row;
+      unsigned int curr = row;
+      do {
+        nodes_in_row.push_back(curr);
+        unsigned int col = colCount[curr];
+        if (col > 0 && col <= max_col) {
+          cols.push_back(col - 1);
+        }
+        curr = right[curr];
+      } while (curr != row);
+
+      uint32_t row_idx = solver->addRow(row, p - 1, cols);
+      for (unsigned int n : nodes_in_row) {
+        solver->registerNodeAlias(n, row_idx);
+      }
+    }
+  }
+
+  return solver;
+}
+
+void assembler_0_c::simdSearch(void) {
+  abbort.store(false, std::memory_order_relaxed);
+  running.store(true, std::memory_order_relaxed);
+
+  auto solver = createSimdSolver();
+  std::atomic<uint64_t> simd_iter{0};
+
+  solver->solve([this](const std::vector<unsigned int> &solution_nodes) -> bool {
+    if (solution_nodes.size() > rows.size())
+      rows.resize(solution_nodes.size());
+    for (unsigned int i = 0; i < solution_nodes.size(); i++)
+      rows[i] = solution_nodes[i];
+    pos = solution_nodes.size();
+    solution();
+    return !abbort.load(std::memory_order_relaxed);
+  }, abbort, simd_iter);
+
+  iterations.fetch_add(simd_iter.load(std::memory_order_relaxed), std::memory_order_relaxed);
+  if (!abbort.load(std::memory_order_relaxed)) {
+    pos = piecenumber + 1;
+    parallelInterrupted = false;
+  } else {
+    parallelInterrupted = true;
+  }
+  running.store(false, std::memory_order_relaxed);
+}
 
 void assembler_0_c::assemble(assembler_cb * callback) {
 
@@ -1880,6 +1982,8 @@ void assembler_0_c::assemble(assembler_cb * callback) {
     unsigned int threads = getEffectiveThreads();
     if (pos == 0 && threads > 1) {
       parallelMultiSearch(threads);
+    } else if (canUseSimd()) {
+      simdSearch();
     } else {
       iterativeMultiSearch();
     }
