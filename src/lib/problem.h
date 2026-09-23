@@ -479,6 +479,11 @@ public:
   //@{
   /** find out how far we are with solving (no, started, finished) */
   solveState_e getSolveState(void) const { return solveState; }
+  /** true when setAssembler() will accept a new or resumed run */
+  bool canStartSolving(void) const {
+    return solveState == SS_UNSOLVED ||
+           (solveState == SS_SOLVING && (assm != nullptr || assemblerState.length() != 0));
+  }
   /** find out if we have an idea about the number of assemblies */
   bool numAssembliesKnown(void) const { return solveState != SS_UNSOLVED; }
   /** get number of assemblies found so far. Throws an exception, when not known */

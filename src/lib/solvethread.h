@@ -318,11 +318,16 @@ public:
   // try to stop the thread at the next possible position
   void stop(void) override;
 
+  /* true once the worker has left run() for good. ACT_ASSERT belongs here:
+   * an assert in the worker ends the thread just as surely as the other three,
+   * and a caller polling for the thread to finish would otherwise wait forever.
+   */
   bool stopped(void) const {
     unsigned int act = action.load(std::memory_order_relaxed);
     return ((act == ACT_PAUSING) ||
             (act == ACT_FINISHED) ||
-            (act == ACT_ERROR)
+            (act == ACT_ERROR) ||
+            (act == ACT_ASSERT)
            );
   }
 

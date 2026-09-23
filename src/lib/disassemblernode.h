@@ -340,15 +340,6 @@ public:
     rotPivotZ = (int16_t)pz;
   }
 
-  /**
-   * Next-pointer for the hash-table lists.
-   *
-   * These node will be saved in disassembler-hash-tables. For
-   * those tables we need a next-pointer to save lists of nodes
-   * that go into the same hash-bucket
-   */
-  disassemblerNode_c * next = nullptr;
-
 private:
 
   // no copying and assigning
