@@ -199,7 +199,7 @@ class voxelFrame_c : public Fl_Gl_Window {
       TranslateRoateScale,       // for showing pieces
       CenterTranslateRoateScale  // for showing disassembly
     } transformationType;
-    transformationType trans;
+    transformationType trans = ScaleRotateTranslate;
 
     void setCenter(float x, float y, float z) {
       centerX = x;
@@ -208,35 +208,35 @@ class voxelFrame_c : public Fl_Gl_Window {
       redraw();
     }
 
-    typedef struct {
+    struct shapeInfo {
 
-      float r, g, b, a;
-      const voxel_c * shape;
-      drawingMode mode;
-      float x, y, z, scale;
-      bool dim;
-      bool useChecker;
-      Polyhedron * poly;
-      Polyhedron * pickPoly;  // the flat mesh of the edge-line style, used to pick in the other styles
-      GLuint list;  // the display list for this shape 0 means no list defined
+      float r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f;
+      const voxel_c * shape = nullptr;
+      drawingMode mode = normal;
+      float x = 0.0f, y = 0.0f, z = 0.0f, scale = 1.0f;
+      bool dim = false;
+      bool useChecker = false;
+      Polyhedron * poly = nullptr;
+      Polyhedron * pickPoly = nullptr;  // the flat mesh of the edge-line style, used to pick in the other styles
+      GLuint list = 0;  // the display list for this shape 0 means no list defined
 
       /* mid-tumble animation (angle==0 means inactive) */
       float animAngle;
       float animAxisX, animAxisY, animAxisZ;
       float animPivotX, animPivotY, animPivotZ;
 
-    } shapeInfo;
+    };
 
-    typedef struct {
-      float r, g, b;
-    } colorInfo;
+    struct colorInfo {
+      float r = 0.0f, g = 0.0f, b = 0.0f;
+    };
 
     std::vector<colorInfo> palette;
 
     void drawShape(shapeInfo * shape);
 
     /* the marker position */
-    int mX1, mY1, mZ, mX2, mY2;
+    int mX1 = 0, mY1 = 0, mZ = 0, mX2 = 0, mY2 = 0;
     int markerType;
 
     rotater_c * rotater;
@@ -256,9 +256,9 @@ class voxelFrame_c : public Fl_Gl_Window {
 
     renderStyle curStyle;
 
-    bool _showCoordinateSystem;
+    bool _showCoordinateSystem = false;
 
-    float centerX, centerY, centerZ;
+    float centerX = 0.0f, centerY = 0.0f, centerZ = 0.0f;
 
     bool _useLightning;
 
@@ -268,7 +268,7 @@ class voxelFrame_c : public Fl_Gl_Window {
     std::vector<int> debugRestrictX, debugRestrictY, debugRestrictZ;
 
     // when picking shapes, this is the coordinate to use
-    int pickx, picky;
+    int pickx = -1, picky = -1;
 
     void draw();
     void resize(int x, int y, int w, int h);

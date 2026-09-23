@@ -68,11 +68,9 @@ gridType_c::gridType_c(xmlParser_c & pars)
   }
 
   pars.skipSubTree();
-
-  sym = 0;
 }
 
-gridType_c::gridType_c(const gridType_c & orig) : type(orig.type), sym(0)
+gridType_c::gridType_c(const gridType_c & orig) : type(orig.type), sym(nullptr)
 {
 }
 
@@ -87,8 +85,6 @@ void gridType_c::save(xmlWriter_c & xml) const
 
 gridType_c::gridType_c(void) {
   type = GT_BRICKS;
-
-  sym = 0;
 }
 
 gridType_c::gridType_c(gridType gt) {
@@ -115,21 +111,16 @@ gridType_c::gridType_c(gridType gt) {
       bt_assert(0);
       break;
   }
-
-  sym = 0;
 }
 
-gridType_c::~gridType_c(void) {
-  if (sym)
-    delete sym;
-}
+gridType_c::~gridType_c(void) = default;
 
-movementCache_c * gridType_c::getMovementCache(const problem_c & puz) const
+std::unique_ptr<movementCache_c> gridType_c::getMovementCache(const problem_c & puz) const
 {
   switch (type) {
-    case GT_BRICKS:           return new movementCache_0_c(puz);
-    case GT_TRIANGULAR_PRISM: return new movementCache_1_c(puz);
-    default: return 0;
+    case GT_BRICKS:           return std::make_unique<movementCache_0_c>(puz);
+    case GT_TRIANGULAR_PRISM: return std::make_unique<movementCache_1_c>(puz);
+    default: return nullptr;
   }
 }
 
@@ -188,20 +179,20 @@ const symmetries_c * gridType_c::getSymmetries(void) const
       case GT_BRICKS:
       case GT_RHOMBIC:
       case GT_TETRA_OCTA:
-        sym = new symmetries_0_c();
+        sym = std::make_unique<symmetries_0_c>();
         break;
       case GT_TRIANGULAR_PRISM:
-        sym = new symmetries_1_c();
+        sym = std::make_unique<symmetries_1_c>();
         break;
       case GT_SPHERES:
-        sym = new symmetries_2_c();
+        sym = std::make_unique<symmetries_2_c>();
         break;
       default:
         break;
     }
   }
 
-  return sym;
+  return sym.get();
 }
 
 unsigned int gridType_c::getCapabilities(void) const
@@ -233,34 +224,34 @@ unsigned int gridType_c::getCapabilities(void) const
   }
 }
 
-assembler_c * gridType_c::findAssembler(const problem_c & p, bool quiet, solverType_e solver)
+std::unique_ptr<assembler_c> gridType_c::findAssembler(const problem_c & p, bool quiet, solverType_e solver)
 {
   if (solver == SOLVER_BT2) {
     if (assembler_bt2_c::canHandle(p)) {
       if (!quiet)
         fprintf(stderr, "using assembler bt2 (dancing cells)\n");
-      return new assembler_bt2_c(p);
+      return std::make_unique<assembler_bt2_c>(p);
     }
     if (assembler_1_c::canHandle(p)) {
       if (!quiet)
         fprintf(stderr, "using assembler 1 (serial fallback)\n");
-      return new assembler_1_c(p);
+      return std::make_unique<assembler_1_c>(p);
     }
-    return 0;
+    return nullptr;
   }
 
   if (assembler_0_c::canHandle(p)) {
     if (!quiet)
       fprintf(stderr, "using assembler 0\n");
-    return new assembler_0_c(p);
+    return std::make_unique<assembler_0_c>(p);
   }
   if (assembler_1_c::canHandle(p)) {
     if (!quiet)
       fprintf(stderr, "using assembler 1\n");
-    return new assembler_1_c(p);
+    return std::make_unique<assembler_1_c>(p);
   }
 
-  return 0;
+  return nullptr;
 }
 
 stlExporter_c * gridType_c::getStlExporter(void) const

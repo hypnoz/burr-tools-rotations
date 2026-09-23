@@ -30,6 +30,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -41,7 +42,7 @@ class assembly_c;
 class separation_c;
 
 struct disasmTask_c {
-  assembly_c * assembly;
+  std::unique_ptr<assembly_c> assembly;
   unsigned long assemblyNumber;
   unsigned long solutionNumber;
 };
@@ -116,8 +117,8 @@ class solveThread_c : public assembler_cb, public thread_c {
 
   private:
 
-    assembler_c::errState errState;
-    int errParam;
+    assembler_c::errState errState = assembler_c::ERR_NONE;
+    int errParam = 0;
 
   public:
 
@@ -132,7 +133,7 @@ class solveThread_c : public assembler_cb, public thread_c {
 
   private:
 
-    time_t startTime;
+    time_t startTime = 0;
 
   public:
 
@@ -221,7 +222,7 @@ class solveThread_c : public assembler_cb, public thread_c {
     /* this is used to increase the drop with time, when the limit is reached
      * and only every 2nd valid solution is taken
      */
-    unsigned int dropMultiplicator;
+    unsigned int dropMultiplicator = 1;
 
   public:
 
@@ -242,11 +243,11 @@ class solveThread_c : public assembler_cb, public thread_c {
 
   private:
 
-    std::atomic<bool> stopPressed;
-    bool return_after_prep;  // sometimes it is useful to only prepare and return,
+    std::atomic<bool> stopPressed{false};  // set by the GUI thread, read by the worker
+    bool return_after_prep = false;  // sometimes it is useful to only prepare and return,
                              // if this flag is set, the program will return
 
-    std::vector<disassembler_c *> disassemblers;
+    std::vector<std::unique_ptr<disassembler_c>> disassemblers;
 
     /* the worker publishes the assembler here once it is fully constructed so
      * that currentActionParameter() and getStats(), called from the GUI thread,
@@ -287,9 +288,9 @@ class solveThread_c : public assembler_cb, public thread_c {
     void stopDisasmWorker(void);
     void cancelDisassemblyWork(void);
     void disasmWorkerRun(disassembler_c * workerDisassm);
-    void enqueueDisassembly(assembly_c * a);
+    void enqueueDisassembly(std::unique_ptr<assembly_c> a);
     void flushDisassemblyQueue(void);
-    void processDisassembly(const disasmTask_c & task, int solutionAction, disassembler_c * workerDisassm);
+    void processDisassembly(disasmTask_c & task, int solutionAction, disassembler_c * workerDisassm);
     unsigned int findInsertIndexByMoves(unsigned int lev) const;
     unsigned int findInsertIndexByRotations(unsigned int lev) const;
     void trimSavedSolutions(int solutionAction);
@@ -302,8 +303,11 @@ public:
 
 private:
 
+  // helper to stop without virtual dispatch in destructor
+  void stopInternal(void);
+
   // the call-back
-  bool assembly(assembly_c* a);
+  bool assembly(std::unique_ptr<assembly_c> a) override;
 
 public:
 
@@ -312,7 +316,7 @@ public:
   bool start(bool stop_after_prep = false);
 
   // try to stop the thread at the next possible position
-  void stop(void);
+  void stop(void) override;
 
   bool stopped(void) const {
     unsigned int act = action.load(std::memory_order_relaxed);
@@ -322,7 +326,7 @@ public:
            );
   }
 
-  void run(void);
+  void run(void) override;
 
 private:
 

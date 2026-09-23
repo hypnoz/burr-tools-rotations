@@ -42,7 +42,7 @@
  */
 void movementAnalysator_c::prepare(void) {
 
-  unsigned int * idx = matrix;
+  unsigned int * idx = matrix.data();
 
   int idxCol = cache->numDirections();
   int idxRow = cache->numDirections() * (piecenumber- pieces->size());
@@ -117,11 +117,11 @@ void movementAnalysator_c::prepare(void) {
         }
 #endif
 
-      unsigned int * pos1 = matrix + d;           // y * piecenumber;
+      unsigned int * pos1 = matrix.data() + d;           // y * piecenumber;
       unsigned int idx, i;
 
       for (unsigned int y = 0; y < size; y+=dirs) {
-        unsigned int * pos2 = matrix + d;           // x
+        unsigned int * pos2 = matrix.data() + d;           // x
 
         for (unsigned int x = 0; x < size; x+=dirs) {
           unsigned int min = *pos2 + *pos1;
@@ -136,7 +136,7 @@ void movementAnalysator_c::prepare(void) {
 
             if (!again) {
 
-              unsigned int * pos3 = matrix + d;
+              unsigned int * pos3 = matrix.data() + d;
 
               for (i = 0; i < y; i+=dirs) {
                 if (min + pos3[y] < pos3[x]) {
@@ -148,7 +148,7 @@ void movementAnalysator_c::prepare(void) {
 
               if (!again) {
 
-                pos3 = matrix + d + piecenumber*x;
+                pos3 = matrix.data() + d + piecenumber*x;
 
                 for (i = 0; i < x; i+=dirs)
                   if (pos3[i] + min < pos1[i]) {
@@ -219,7 +219,7 @@ bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int ne
     do {
 
       finished = true;
-      unsigned int * idx = matrix + nd;
+      unsigned int * idx = matrix.data() + nd;
 
       // go over all pieces
       for (int i = 0; i < next_pn; i++)
@@ -271,7 +271,7 @@ bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int ne
     do {
 
       finished = true;
-      unsigned int * idx = matrix + nd;
+      unsigned int * idx = matrix.data() + nd;
 
       for (int i = 0; i < next_pn; i++)
       {
@@ -308,12 +308,18 @@ bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int ne
 
 movementAnalysator_c::movementAnalysator_c(const problem_c & problem, bool enableRotations,
                                            solverType_e solverType) :
+  cache(problem.getPuzzle().getGridType()->getMovementCache(problem)),
+  matrix(cache ? cache->numDirections() * problem.getNumberOfPieces() * problem.getNumberOfPieces() : 0, 0),
+  movement(problem.getNumberOfPieces()),
+  weights(problem.getNumberOfPieces()),
+  check(problem.getNumberOfPieces(), 0),
   piecenumber(problem.getNumberOfPieces()),
-  checkRotations(false), bricksGrid(false), rotationMoves(0), rotationsActive(false), rotationSearchUs(0),
+  nodes(std::make_unique<countingNodeHash>()),
+  checkRotations(false), bricksGrid(false), rotationsActive(false), rotationSearchUs(0),
   linearSearchUs(0), searchPhaseStartUs(0), searchTimingOpen(false), searchPhaseLinear(true),
+  nextstate(-1),
   maxstep((unsigned int) -1) {
 
-  cache = problem.getPuzzle().getGridType()->getMovementCache(problem);
   /* we assert that there must be a cache, otherwise no disassembly
    * analysis is possible anyway and this should not
    * have been called
@@ -322,31 +328,19 @@ movementAnalysator_c::movementAnalysator_c(const problem_c & problem, bool enabl
 
   bricksGrid = (problem.getPuzzle().getGridType()->getType() == gridType_c::GT_BRICKS);
 
-  /* allocate the necessary arrays */
-  movement = new unsigned int[piecenumber];
-  check = new bool[piecenumber];
-
-  matrix = new unsigned int[cache->numDirections() * piecenumber * piecenumber];
-  memset(matrix, 0, cache->numDirections() * piecenumber * piecenumber * sizeof(unsigned int));
-
   /* create the weights array */
-  weights = new int[problem.getNumberOfPieces()];
   unsigned int pc = 0;
   for (unsigned int i = 0; i < problem.getNumberOfParts(); i++) {
     for (unsigned int j = 0; j < problem.getPartMaximum(i); j++)
       weights[pc++] = problem.getPartShape(i)->getWeight();
   }
 
-  nextstate = -1;
-
-  nodes = new countingNodeHash();
-
   if (bricksGrid) {
     if (solverType == SOLVER_CROWELL)
-      rotationMoves = new rotationMoves_crowell_c(problem, cache);
+      rotationMoves = std::make_unique<rotationMoves_crowell_c>(problem, cache.get());
     else
       /* Classic and BurrTools 2 share the complete 90° generator. */
-      rotationMoves = new rotationMoves_0_c(problem, cache);
+      rotationMoves = std::make_unique<rotationMoves_0_c>(problem, cache.get());
   }
 
   setCheckRotations(enableRotations);
@@ -356,17 +350,7 @@ void movementAnalysator_c::setCheckRotations(bool enable) {
   checkRotations = enable && bricksGrid && rotationMoves;
 }
 
-movementAnalysator_c::~movementAnalysator_c() {
-
-  delete [] movement;
-  delete [] check;
-  delete [] matrix;
-
-  delete cache;
-  delete [] weights;
-  delete nodes;
-  delete rotationMoves;
-}
+movementAnalysator_c::~movementAnalysator_c() = default;
 
 static int max(int a, int b) { if (a > b) return a; else return b; }
 

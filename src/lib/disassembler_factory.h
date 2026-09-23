@@ -14,16 +14,18 @@
 
 #include "solvertype.h"
 
+#include <memory>
+
 class disassembler_c;
 class problem_c;
 
-/** Create a take-apart engine. Caller owns the pointer.
+/** Create a take-apart engine.
  *  BurrTools Classic / comparison: bt_classic_solver.h
  *  SOLVER_CROWELL: crowell_solver.h
  *  SOLVER_BT2 uses Classic take-apart; assembly is assembler_bt2_c
  */
-disassembler_c * createDisassembler(const problem_c & puz,
-                                    bool enableRotations,
-                                    solverType_e type = SOLVER_CLASSIC);
+std::unique_ptr<disassembler_c> createDisassembler(const problem_c & puz,
+                                                   bool enableRotations,
+                                                   solverType_e type = SOLVER_CLASSIC);
 
 #endif

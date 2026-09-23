@@ -268,7 +268,7 @@ jobs:
 
       - name: Build
         run: |
-          meson setup build-win --cross-file cross-mingw64.txt --buildtype=release --werror
+          meson setup build-win --cross-file cross-mingw64.txt --buildtype=release --werror -Dpython=disabled
           meson compile -C build-win
           x86_64-w64-mingw32-strip build-win/burrtools.exe build-win/burrTxt.exe build-win/burrTxt2.exe
 

@@ -1019,7 +1019,8 @@ void mainWindow_c::cb_BtnAssemblerStep(void) {
 
   updateInterface();
 
-  View3D->getView()->showAssemblerState(puzzle->getProblem(solutionProblem->getSelection()), assm->getAssembly());
+  std::unique_ptr<assembly_c> a = assm->getAssembly();
+  View3D->getView()->showAssemblerState(puzzle->getProblem(solutionProblem->getSelection()), a.get());
 }
 
 static void cb_AllowColor_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AllowColor(); }
@@ -1412,21 +1413,19 @@ void mainWindow_c::cb_AddDisasm(void) {
     return;
   }
 
-  disassembler_c * dis = createDisassembler(*pr, CheckRotations->value() != 0,
+  std::unique_ptr<disassembler_c> dis = createDisassembler(*pr, CheckRotations->value() != 0,
       solverTypeChoice ? solverTypeFromIndex(solverTypeChoice->value())
                        : SOLVER_CLASSIC);
 
-  separation_c * d = dis->disassemble(pr->getSavedSolution(sol)->getAssembly());
+  std::unique_ptr<separation_c> d = dis->disassemble(pr->getSavedSolution(sol)->getAssembly());
 
   changed = true;
 
   if (d)
-    pr->getSavedSolution(sol)->setDisassembly(d);
+    pr->getSavedSolution(sol)->setDisassembly(std::move(d));
 
   activateSolution(prob, (int)SolutionSel->value()-1);
   updateInterface();
-
-  delete dis;
 }
 
 static void cb_AddAllDisasm_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AddAllDisasm(true); }
@@ -1446,7 +1445,7 @@ void mainWindow_c::cb_AddAllDisasm(bool all) {
 
   changed = true;
 
-  disassembler_c * dis = createDisassembler(*pr, CheckRotations->value() != 0,
+  std::unique_ptr<disassembler_c> dis = createDisassembler(*pr, CheckRotations->value() != 0,
       solverTypeChoice ? solverTypeFromIndex(solverTypeChoice->value())
                        : SOLVER_CLASSIC);
 
@@ -1467,14 +1466,13 @@ void mainWindow_c::cb_AddAllDisasm(bool all) {
 
     if (all || !pr->getSavedSolution(sol)->getDisassembly()) {
 
-      separation_c * d = dis->disassemble(pr->getSavedSolution(sol)->getAssembly());
+      std::unique_ptr<separation_c> d = dis->disassemble(pr->getSavedSolution(sol)->getAssembly());
 
       if (d)
-        pr->getSavedSolution(sol)->setDisassembly(d);
+        pr->getSavedSolution(sol)->setDisassembly(std::move(d));
     }
   }
 
-  delete dis;
   delete w;
 
   activateSolution(prob, (int)SolutionSel->value()-1);
@@ -1686,7 +1684,7 @@ void mainWindow_c::cb_Load_Ps3d(void) {
     if (f) {
 
       std::ifstream in(f);
-      puzzle_c * newPuzzle = loadPuzzlerSolver3D(&in);
+      puzzle_c * newPuzzle = loadPuzzlerSolver3D(&in).release();
 
       if (!newPuzzle) {
         fl_alert("Could not load puzzle, sorry!");
@@ -1839,7 +1837,7 @@ void mainWindow_c::cb_AssembliesToShapes(void) {
 
     for (unsigned int s = 0; s < pr->getNumberOfSavedSolutions(); s++)
     {
-      voxel_c * shape = pr->getSavedSolution(s)->getAssembly()->createSpace(*pr);
+      voxel_c * shape = pr->getSavedSolution(s)->getAssembly()->createSpace(*pr).release();
 
       if ((filter & assmImportWindow_c::dropDisconnected) && !shape->connected(0, true, voxel_c::VX_EMPTY))
       {
@@ -2794,7 +2792,7 @@ bool mainWindow_c::tryToLoad(const char * f, bool * reportedError) {
   if (!f) return false;
   if (!fileExists(f)) return false;
 
-  std::istream * str = openGzFile(f);
+  std::unique_ptr<std::istream> str = openGzFile(f);
   if (!str) return false;
   xmlParser_c pars(*str);
 
@@ -2808,11 +2806,8 @@ bool mainWindow_c::tryToLoad(const char * f, bool * reportedError) {
   {
     fl_message("%s",(std::string("load error: ") + e.what()).c_str());
     if (reportedError) *reportedError = true;
-    delete str;
     return false;
   }
-
-  delete str;
 
   if (fname) delete [] fname;
   fname = new char[strlen(f)+1];
@@ -3071,7 +3066,7 @@ void mainWindow_c::activateSolution(unsigned int prob, unsigned int num) {
 
       char levelText[50];
       int len = snprintf(levelText, 50, "%i (", pr->getSavedSolution(num)->getDisassembly()->sumSteps());
-      pr->getSavedSolution(num)->getDisassembly()->movesText(levelText + len, 50-len);
+      snprintf(levelText + len, 50-len, "%s", pr->getSavedSolution(num)->getDisassembly()->movesText().c_str());
       levelText[strlen(levelText)+1] = 0;
       levelText[strlen(levelText)] = ')';
 
@@ -3097,7 +3092,7 @@ void mainWindow_c::activateSolution(unsigned int prob, unsigned int num) {
 
       char levelText[50];
       int len = snprintf(levelText, 50, "%i (", pr->getSavedSolution(num)->getDisassemblyInfo()->sumSteps());
-      pr->getSavedSolution(num)->getDisassemblyInfo()->movesText(levelText + len, 50-len);
+      snprintf(levelText + len, 50-len, "%s", pr->getSavedSolution(num)->getDisassemblyInfo()->movesText().c_str());
       levelText[strlen(levelText)+1] = 0;
       levelText[strlen(levelText)] = ')';
 

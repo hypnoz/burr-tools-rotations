@@ -49,7 +49,7 @@ static int parseDoubledPivot(const std::string & s) {
  * defined by the 2 iterators
  */
 template<typename iter>
-void getNumbers(std::string str, iter start, iter end, bool neg_allowed) {
+void getNumbers(const std::string & str, iter start, iter end, bool neg_allowed) {
 
   int val = 0;
   bool gotNum = false;
@@ -162,7 +162,7 @@ void state_c::save(xmlWriter_c & xml, unsigned int piecenumber, bool includeRota
   /* Only for <solutionsWithRotations>: older BurrTools cannot skip unknown
    * tags inside <state>, so classic <solutions> must stay dx/dy/dz only. */
   if (includeRotationFields) {
-    if (dt) {
+    if (!dt.empty()) {
       xml.newTag("dt");
       {
         std::ostream & str = xml.addContent();
@@ -195,155 +195,106 @@ state_c::state_c(xmlParser_c & pars, unsigned int pn)
 {
   pars.require(xmlParser_c::START_TAG, "state");
 
-#ifndef NDEBUG
-  piecenumber = pn;
-#endif
-
-  dx = dy = dz = dt = 0;
   clearRotationArrival();
 
-  try
+  bool has_dx = false, has_dy = false, has_dz = false;
+
+  do
   {
-    do
+    int state = pars.nextTag();
+
+    if (state == xmlParser_c::END_TAG) break;
+    if (state != xmlParser_c::START_TAG)
+      pars.exception("expected new tag but found something else");
+
+    if (pars.getName() == "dx")
     {
-      int state = pars.nextTag();
+      dx.resize(pn);
+      pars.next();
+      getNumbers(pars.getText(), dx.begin(), dx.end(), true);
+      pars.next();
+      pars.require(xmlParser_c::END_TAG, "dx");
+      has_dx = true;
+    }
+    else if (pars.getName() == "dy")
+    {
+      dy.resize(pn);
+      pars.next();
+      getNumbers(pars.getText(), dy.begin(), dy.end(), true);
+      pars.next();
+      pars.require(xmlParser_c::END_TAG, "dy");
+      has_dy = true;
+    }
+    else if (pars.getName() == "dz")
+    {
+      dz.resize(pn);
+      pars.next();
+      getNumbers(pars.getText(), dz.begin(), dz.end(), true);
+      pars.next();
+      pars.require(xmlParser_c::END_TAG, "dz");
+      has_dz = true;
+    }
+    else if (pars.getName() == "dt")
+    {
+      dt.resize(pn);
+      pars.next();
+      getNumbers(pars.getText(), dt.begin(), dt.end(), false);
+      pars.next();
+      pars.require(xmlParser_c::END_TAG, "dt");
+    }
+    else if (pars.getName() == "rotation")
+    {
+      std::string s;
+      s = pars.getAttributeValue("piece");
+      if (!s.length()) pars.exception("rotation needs piece");
+      rotPiece = (unsigned int)atoi(s.c_str());
+      s = pars.getAttributeValue("px"); rotPivotX = parseDoubledPivot(s);
+      s = pars.getAttributeValue("py"); rotPivotY = parseDoubledPivot(s);
+      s = pars.getAttributeValue("pz"); rotPivotZ = parseDoubledPivot(s);
+      s = pars.getAttributeValue("axis"); rotAxis = (unsigned int)atoi(s.c_str());
+      s = pars.getAttributeValue("sense"); rotSense = (unsigned int)atoi(s.c_str());
+      pars.skipSubTree();
+    }
+  } while (true);
 
-      if (state == xmlParser_c::END_TAG) break;
-      if (state != xmlParser_c::START_TAG)
-        pars.exception("expected new tag but dounf something else");
-
-      if (pars.getName() == "dx")
-      {
-        dx = new int[pn];
-        pars.next();
-        getNumbers(pars.getText(), dx, dx+pn, true);
-        pars.next();
-        pars.require(xmlParser_c::END_TAG, "dx");
-      }
-      else if (pars.getName() == "dy")
-      {
-        dy = new int[pn];
-        pars.next();
-        getNumbers(pars.getText(), dy, dy+pn, true);
-        pars.next();
-        pars.require(xmlParser_c::END_TAG, "dy");
-      }
-      else if (pars.getName() == "dz")
-      {
-        dz = new int[pn];
-        pars.next();
-        getNumbers(pars.getText(), dz, dz+pn, true);
-        pars.next();
-        pars.require(xmlParser_c::END_TAG, "dz");
-      }
-      else if (pars.getName() == "dt")
-      {
-        dt = new int[pn];
-        pars.next();
-        getNumbers(pars.getText(), dt, dt+pn, false);
-        pars.next();
-        pars.require(xmlParser_c::END_TAG, "dt");
-      }
-      else if (pars.getName() == "rotation")
-      {
-        std::string s;
-        s = pars.getAttributeValue("piece");
-        if (!s.length()) pars.exception("rotation needs piece");
-        rotPiece = (unsigned int)atoi(s.c_str());
-        s = pars.getAttributeValue("px"); rotPivotX = parseDoubledPivot(s);
-        s = pars.getAttributeValue("py"); rotPivotY = parseDoubledPivot(s);
-        s = pars.getAttributeValue("pz"); rotPivotZ = parseDoubledPivot(s);
-        s = pars.getAttributeValue("axis"); rotAxis = (unsigned int)atoi(s.c_str());
-        s = pars.getAttributeValue("sense"); rotSense = (unsigned int)atoi(s.c_str());
-        pars.skipSubTree();
-      }
-    } while (true);
-
-    if (!dx || !dy || !dz)
-      pars.exception("disassembly state needs dx, dy and dz subnode");
-  }
-
-  catch (xmlParserException_c & e)
-  {
-    if (dx) delete [] dx;
-    if (dy) delete [] dy;
-    if (dz) delete [] dz;
-    if (dt) delete [] dt;
-    pars.exception(e.what());
-  }
+  if (!has_dx || !has_dy || !has_dz)
+    pars.exception("disassembly state needs dx, dy and dz subnode");
 
   pars.require(xmlParser_c::END_TAG, "state");
 }
 
 state_c::state_c(const state_c * cpy, unsigned int pn)
-#ifndef NDEBUG
-: piecenumber(pn)
-#endif
+  : dx(cpy->dx), dy(cpy->dy), dz(cpy->dz), dt(cpy->dt),
+    rotPiece(cpy->rotPiece),
+    rotPivotX(cpy->rotPivotX), rotPivotY(cpy->rotPivotY), rotPivotZ(cpy->rotPivotZ),
+    rotAxis(cpy->rotAxis), rotSense(cpy->rotSense)
 {
-  dx = new int[pn];
-  dy = new int[pn];
-  dz = new int[pn];
-
-  memcpy(dx, cpy->dx, pn*sizeof(int));
-  memcpy(dy, cpy->dy, pn*sizeof(int));
-  memcpy(dz, cpy->dz, pn*sizeof(int));
-
-  if (cpy->dt) {
-    dt = new int[pn];
-    memcpy(dt, cpy->dt, pn*sizeof(int));
-  } else {
-    dt = 0;
-  }
-
-  rotPiece = cpy->rotPiece;
-  rotPivotX = cpy->rotPivotX;
-  rotPivotY = cpy->rotPivotY;
-  rotPivotZ = cpy->rotPivotZ;
-  rotAxis = cpy->rotAxis;
-  rotSense = cpy->rotSense;
+  (void)pn;
+  bt_assert(dx.size() == pn && dy.size() == pn && dz.size() == pn);
 }
 
 state_c::state_c(unsigned int pn)
-#ifndef NDEBUG
-: piecenumber(pn)
-#endif
+  : dx(pn, 0), dy(pn, 0), dz(pn, 0), dt(pn, 0)
 {
-  dx = new int[pn];
-  dy = new int[pn];
-  dz = new int[pn];
-  dt = new int[pn];
-  memset(dt, 0, pn*sizeof(int));
-  bt_assert(dx && dy && dz && dt);
   clearRotationArrival();
 }
 
-state_c::~state_c() {
-  delete [] dx;
-  delete [] dy;
-  delete [] dz;
-  delete [] dt;
-}
+state_c::~state_c() = default;
 
 void state_c::set(unsigned int piece, int x, int y, int z) {
-  bt_assert(piece < piecenumber);
+  bt_assert(piece < dx.size());
   dx[piece] = x;
   dy[piece] = y;
   dz[piece] = z;
 }
 
 void state_c::set(unsigned int piece, int x, int y, int z, unsigned int orient) {
-  bt_assert(piece < piecenumber);
+  bt_assert(piece < dx.size());
   dx[piece] = x;
   dy[piece] = y;
   dz[piece] = z;
-  if (!dt) {
-#ifndef NDEBUG
-    dt = new int[piecenumber];
-    memset(dt, 0, piecenumber * sizeof(int));
-#else
-    bt_assert(0 && "orientation set requires dt allocated at construction");
-#endif
-  }
+  if (dt.empty())
+    dt.assign(dx.size(), 0);
   dt[piece] = (int)orient;
 }
 
@@ -364,7 +315,7 @@ void state_c::clearRotationArrival(void) {
 }
 
 bool state_c::pieceRemoved(unsigned int i) const {
-  bt_assert(i < piecenumber);
+  bt_assert(i < dx.size());
   return (abs(dx[i]) > 10000) || (abs(dy[i]) > 10000) || (abs(dz[i]) > 10000);
 }
 
@@ -432,7 +383,6 @@ separation_c::separation_c(xmlParser_c & pars, unsigned int pieceCnt)
   unsigned int piecenumber = 0;
   std::string str;
   unsigned int removedPc = 0, leftPc = 0;
-  removed = left = 0;
 
   do
   {
@@ -470,7 +420,7 @@ separation_c::separation_c(xmlParser_c & pars, unsigned int pieceCnt)
         pars.exception("there are states behind the sub separations");
 
       // get the states
-      states.push_back(new state_c(pars, piecenumber));
+      states.push_back(std::make_unique<state_c>(pars, piecenumber));
     }
     else if (pars.getName() == "separation")
     {
@@ -496,13 +446,13 @@ separation_c::separation_c(xmlParser_c & pars, unsigned int pieceCnt)
       {
         if (left)
           pars.exception("more than one left branch in disassembly");
-        left = new separation_c(pars, leftPc);
+        left = std::make_unique<separation_c>(pars, leftPc);
       }
       else if (str == "removed")
       {
         if (removed)
           pars.exception("more than one removed branch in disassembly");
-        removed = new separation_c(pars, removedPc);
+        removed = std::make_unique<separation_c>(pars, removedPc);
       }
       else
         pars.exception("subnodes must have either left or removed type");
@@ -520,18 +470,17 @@ separation_c::separation_c(xmlParser_c & pars, unsigned int pieceCnt)
   numSequences = (left?left->numSequences:0) + (removed?removed->numSequences:0) + 1;
 }
 
-separation_c::separation_c(separation_c * r, separation_c * l, const std::vector<unsigned int> & pcs) : removed(r), left(l) {
-  pieces = pcs;
-
+separation_c::separation_c(separation_c * r, separation_c * l, const std::vector<unsigned int> & pcs)
+  : pieces(pcs), removed(r), left(l) {
   numSequences = (l?l->numSequences:0) + (r?r->numSequences:0) + 1;
 }
 
-separation_c::~separation_c() {
-  delete removed;
-  delete left;
-  for (unsigned int i = 0; i < states.size(); i++)
-    delete states[i];
+separation_c::separation_c(std::unique_ptr<separation_c> r, std::unique_ptr<separation_c> l, const std::vector<unsigned int> & pcs)
+  : pieces(pcs), removed(std::move(r)), left(std::move(l)) {
+  numSequences = (left?left->numSequences:0) + (removed?removed->numSequences:0) + 1;
 }
+
+separation_c::~separation_c() = default;
 
 unsigned int separation_c::sumMoves(void) const {
   bt_assert(states.size());
@@ -559,7 +508,7 @@ static bool stateTransitionIsRotation(const state_c * a, const state_c * b, unsi
 unsigned int separation_c::getRotations(void) const {
   unsigned int rots = 0;
   for (unsigned int i = 0; i + 1 < states.size(); i++)
-    if (stateTransitionIsRotation(states[i], states[i+1], pieces.size()))
+    if (stateTransitionIsRotation(states[i].get(), states[i+1].get(), pieces.size()))
       rots++;
   return rots;
 }
@@ -577,29 +526,26 @@ unsigned int separation_c::sumRotations(void) const {
   return erg;
 }
 
-void separation_c::addstate(state_c *st) {
+void separation_c::addstate(std::unique_ptr<state_c> st) {
   bt_assert(st->getPiecenumber() == pieces.size());
-  states.push_front(st);
+  states.push_front(std::move(st));
 }
 
-separation_c::separation_c(const separation_c * cpy) {
+void separation_c::addstate(state_c *st) {
+  addstate(std::unique_ptr<state_c>(st));
+}
 
-  pieces = cpy->pieces;
+separation_c::separation_c(const separation_c * cpy)
+  : pieces(cpy->pieces), numSequences(cpy->numSequences) {
 
   for (unsigned int i = 0; i < cpy->states.size(); i++)
-    states.push_back(new state_c(cpy->states[i], pieces.size()));
+    states.push_back(std::make_unique<state_c>(cpy->states[i].get(), pieces.size()));
 
   if (cpy->left)
-    left = new separation_c(cpy->left);
-  else
-    left = 0;
+    left = std::make_unique<separation_c>(cpy->left.get());
 
   if (cpy->removed)
-    removed = new separation_c(cpy->removed);
-  else
-    removed = 0;
-
-  numSequences = cpy->numSequences;
+    removed = std::make_unique<separation_c>(cpy->removed.get());
 }
 
 
@@ -656,7 +602,7 @@ int separation_c::movesTextPieceRemovals(char * txt, int len, bool withRots,
   if (len2 < 0 || len2 + 5 > len)
     return len2;
 
-  const separation_c * cont = removed ? removed : left;
+  const separation_c * cont = removed ? removed.get() : left.get();
   if (cont) {
     char buf[256];
     int clen = cont->movesTextPieceRemovals(buf, (int)sizeof(buf), withRots, 0, 0);
@@ -669,6 +615,12 @@ int separation_c::movesTextPieceRemovals(char * txt, int len, bool withRots,
   }
 
   return len2;
+}
+
+std::string separation_c::movesText(void) const {
+  char buf[256];
+  movesText2(buf, sizeof(buf), sumRotations() > 0);
+  return std::string(buf);
 }
 
 void separation_c::exchangeShape(unsigned int s1, unsigned int s2) {
@@ -901,6 +853,12 @@ unsigned int separationInfo_c::sumRotations(void) const {
   for (unsigned int i = 0; i < rotValues.size(); i++)
     erg += rotValues[i];
   return erg;
+}
+
+std::string separationInfo_c::movesText(void) const {
+  char buf[256];
+  movesText2(buf, sizeof(buf), 0);
+  return std::string(buf);
 }
 
 int separationInfo_c::movesText2(char * txt, int len, unsigned int idx) const {

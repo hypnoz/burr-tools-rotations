@@ -7,6 +7,7 @@
 
 #include "assembler.h"
 
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -27,15 +28,10 @@ unsigned int bt2ChooseAssemblerWorkers(void) {
 #endif
 }
 
-static void deleteClones(std::vector<assembler_c *> & clones) {
-
-  for (unsigned int i = 0; i < clones.size(); i++)
-    delete clones[i];
-  clones.clear();
-}
+typedef std::vector<std::unique_ptr<assembler_c>> cloneList_t;
 
 static assembler_c * busiestWorker(assembler_c * primary,
-                                   const std::vector<assembler_c *> & clones) {
+                                   const cloneList_t & clones) {
 
   assembler_c * best = 0;
   unsigned int bestWork = 0;
@@ -46,7 +42,7 @@ static assembler_c * busiestWorker(assembler_c * primary,
   }
 
   for (unsigned int i = 0; i < clones.size(); i++) {
-    assembler_c * c = clones[i];
+    assembler_c * c = clones[i].get();
     if (!c || c->searchFinished())
       continue;
     unsigned int w = c->remainingSearchWork();
@@ -74,26 +70,24 @@ unsigned int bt2Assemble(assembler_c * assm, assembler_cb * callback,
     return 1;
   }
 
-  assembler_c * probe = assm->clonePrepared();
-  if (!probe) {
+  if (!assm->clonePrepared()) {
     assm->assemble(callback);
     return 1;
   }
-  delete probe;
 
   /* Peel root branches until the pool is full (Andreas split at depth). */
-  std::vector<assembler_c *> clones;
+  cloneList_t clones;
   clones.reserve(workerCount - 1);
   for (unsigned int i = 1; i < workerCount; i++) {
-    assembler_c * c = assm->splitSearch();
+    std::unique_ptr<assembler_c> c = assm->splitSearch();
     if (!c)
       break;
-    clones.push_back(c);
+    clones.push_back(std::move(c));
   }
 
   assm->clearProgressPeers();
   for (unsigned int i = 0; i < clones.size(); i++)
-    assm->addProgressPeer(clones[i]);
+    assm->addProgressPeer(clones[i].get());
 
   const unsigned int slice = 8000;
 
@@ -105,7 +99,7 @@ unsigned int bt2Assemble(assembler_c * assm, assembler_cb * callback,
     if (!assm->searchFinished())
       any = true;
     for (unsigned int i = 0; i < clones.size(); i++) {
-      runSlice(clones[i], callback, slice);
+      runSlice(clones[i].get(), callback, slice);
       if (clones[i] && !clones[i]->searchFinished())
         any = true;
     }
@@ -114,14 +108,13 @@ unsigned int bt2Assemble(assembler_c * assm, assembler_cb * callback,
         assembler_c * src = busiestWorker(assm, clones);
         if (!src)
           continue;
-        assembler_c * n = src->splitSearch();
+        std::unique_ptr<assembler_c> n = src->splitSearch();
         if (!n)
           continue;
-        delete clones[i];
-        clones[i] = n;
+        clones[i] = std::move(n);
         assm->clearProgressPeers();
         for (unsigned int j = 0; j < clones.size(); j++)
-          assm->addProgressPeer(clones[j]);
+          assm->addProgressPeer(clones[j].get());
       }
     }
   }
@@ -132,7 +125,7 @@ unsigned int bt2Assemble(assembler_c * assm, assembler_cb * callback,
     threads.reserve(clones.size());
     try {
       for (unsigned int i = 0; i < clones.size(); i++) {
-        assembler_c * c = clones[i];
+        assembler_c * c = clones[i].get();
         if (c && !c->searchFinished()) {
           threads.push_back(std::thread([c, callback]() {
             runSlice(c, callback, 8000);
@@ -146,7 +139,6 @@ unsigned int bt2Assemble(assembler_c * assm, assembler_cb * callback,
         if (threads[i].joinable())
           threads[i].join();
       assm->clearProgressPeers();
-      deleteClones(clones);
       throw;
     }
     for (unsigned int i = 0; i < threads.size(); i++)
@@ -164,21 +156,20 @@ unsigned int bt2Assemble(assembler_c * assm, assembler_cb * callback,
         assembler_c * src = busiestWorker(assm, clones);
         if (!src)
           continue;
-        assembler_c * n = src->splitSearch();
+        std::unique_ptr<assembler_c> n = src->splitSearch();
         if (!n)
           continue;
-        delete clones[i];
-        clones[i] = n;
+        clones[i] = std::move(n);
         any = true;
       }
     }
     if (assm->searchFinished()) {
       assembler_c * src = busiestWorker(0, clones);
       if (src) {
-        assembler_c * n = src->splitSearch();
+        std::unique_ptr<assembler_c> n = src->splitSearch();
         if (n) {
           /* Primary finished: keep it as a shell and move stolen work onto a clone. */
-          clones.push_back(n);
+          clones.push_back(std::move(n));
           any = true;
         }
       }
@@ -186,7 +177,7 @@ unsigned int bt2Assemble(assembler_c * assm, assembler_cb * callback,
 
     assm->clearProgressPeers();
     for (unsigned int i = 0; i < clones.size(); i++)
-      assm->addProgressPeer(clones[i]);
+      assm->addProgressPeer(clones[i].get());
   }
 #endif
 
@@ -195,6 +186,5 @@ unsigned int bt2Assemble(assembler_c * assm, assembler_cb * callback,
     extra += clones[i]->getIterations();
   assm->clearProgressPeers();
   assm->addIterations(extra);
-  deleteClones(clones);
   return workerCount;
 }

@@ -57,7 +57,7 @@ bool quiet;
 bool jsonOutput;
 solverType_e solverType;
 
-disassembler_c * d;
+std::unique_ptr<disassembler_c> d;
 
 #ifndef _WIN32
 /** Silence library diagnostics on stderr during batch solves. */
@@ -166,7 +166,7 @@ public:
   void considerLevel(separation_c * da) {
 
     char lev[200];
-    da->movesText(lev, 200);
+    snprintf(lev, sizeof(lev), "%s", da->movesText().c_str());
 
     int level = 0;
     int totalmoves = 0;
@@ -182,7 +182,7 @@ public:
     }
   }
 
-  bool assembly(assembly_c * a) {
+  bool assembly(std::unique_ptr<assembly_c> a) override {
 
     std::lock_guard<std::mutex> lock(cbMutex);
 
@@ -190,34 +190,27 @@ public:
 
     if (disassemble) {
 
-      separation_c * da = d->disassemble(a);
+      auto da = d->disassemble(a.get());
 
       if (da) {
         Solutions++;
 
         if (jsonOutput) {
-          considerLevel(da);
+          considerLevel(da.get());
         } else {
           if (printSolutions)
-            print(a, puzzle);
+            print(a.get(), puzzle);
 
-          if (!quiet || allProblems) {
-            char lev[200];
-            da->movesText(lev,200);
-            printf("level: %s\n", lev);
-          }
+          if (!quiet || allProblems)
+            printf("level: %s\n", da->movesText().c_str());
 
           if (printDisassemble)
-            print(da, a, puzzle);
+            print(da.get(), a.get(), puzzle);
         }
-
-        delete da;
       }
 
     } else if (printSolutions)
-      print(a, puzzle);
-
-    delete a;
+      print(a.get(), puzzle);
 
     return true;
   }
@@ -444,10 +437,9 @@ int main(int argv, char* args[]) {
     return 2;
   }
 
-  std::istream * str = openGzFile(args[filenumber]);
+  auto str = openGzFile(args[filenumber]);
   xmlParser_c pars(*str);
   puzzle_c p(pars);
-  delete str;
 
   if (ask) {
 
@@ -457,15 +449,15 @@ int main(int argv, char* args[]) {
         break;
       case W_NUM_SOLUTIONS:
         for (unsigned int i = 0; i < p.getNumberOfProblems(); i++)
-          printf("number of solutions for problem %i: %li\n", i, p.getProblem(i)->getNumSolutions());
+          printf("number of solutions for problem %u: %lu\n", i, p.getProblem(i)->getNumSolutions());
         break;
       case W_SOLUTION_PIECES:
       case W_SOLUTION_ASSM:
         for (unsigned int i = 0; i < p.getNumberOfProblems(); i++) {
-          printf("problem %i\n", i);
+          printf("problem %u\n", i);
           for (unsigned int s = 0; s < p.getProblem(i)->getNumSolutions(); s++) {
 
-            printf("%03i: ", s+1);
+            printf("%03u: ", s+1);
             const assembly_c * a = p.getProblem(i)->getSavedSolution(s)->getAssembly();
 
             unsigned int pnum = 0;
@@ -473,7 +465,7 @@ int main(int argv, char* args[]) {
             for (unsigned int pie = 0; pie < p.getProblem(i)->getNumberOfParts(); pie++) {
               for (unsigned int pp = 0; pp < p.getProblem(i)->getPartMaximum(pie); pp++) {
                 if (a->isPlaced(pnum)) {
-                  printf("S%i ", p.getProblem(i)->getShapeIdOfPart(pie)+1);
+                  printf("S%u ", p.getProblem(i)->getShapeIdOfPart(pie)+1);
                 }
                 pnum++;
               }
@@ -519,7 +511,7 @@ int main(int argv, char* args[]) {
 
       problem_c * problem = p.getProblem(pr);
 
-      assembler_c *assm = p.getGridType()->findAssembler(*problem, jsonOutput, solverType);
+      auto assm = p.getGridType()->findAssembler(*problem, jsonOutput, solverType);
 
       switch (assm->createMatrix(false, false, false)) {
       case assembler_c::ERR_TOO_MANY_UNITS:
@@ -576,12 +568,12 @@ int main(int argv, char* args[]) {
 
       asm_cb a(problem);
 
-      d = 0;
+      d.reset();
       if (disassemble)
         d = createDisassembler(*problem, checkRotations, solverType);
 
       if (solverType == SOLVER_BT2)
-        bt2Assemble(assm, &a, bt2ChooseAssemblerWorkers());
+        bt2Assemble(assm.get(), &a, bt2ChooseAssemblerWorkers());
       else
         assm->assemble(&a);
 
@@ -594,10 +586,7 @@ int main(int argv, char* args[]) {
           cout << endl;
       }
 
-      delete assm;
-      delete d;
-      d = 0;
-      assm = 0;
+      d.reset();
     }
 
     if (jsonOutput)
@@ -614,23 +603,22 @@ int main(int argv, char* args[]) {
 
         if (problem->getSavedSolution(sol)->getAssembly()) {
 
-          separation_c * da = d->disassemble(problem->getSavedSolution(sol)->getAssembly());
+          auto da = d->disassemble(problem->getSavedSolution(sol)->getAssembly());
 
           if (da) {
             if (printSolutions)
               print(problem->getSavedSolution(sol)->getAssembly(), problem);
 
             if (!quiet)
-              printf("level: %i\n", da->getMoves());
+              printf("level: %u\n", da->getMoves());
 
             if (printDisassemble)
-              print(da, problem->getSavedSolution(sol)->getAssembly(),problem);
-            delete da;
+              print(da.get(), problem->getSavedSolution(sol)->getAssembly(),problem);
           }
         }
       }
 
-      delete d;
+      d.reset();
     }
   }
 

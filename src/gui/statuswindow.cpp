@@ -21,6 +21,8 @@
 #include "statuswindow.h"
 #include "piececolor.h"
 
+#include <memory>
+
 #include "../lib/voxel.h"
 #include "../lib/puzzle.h"
 #include "../lib/problem.h"
@@ -450,7 +452,7 @@ void statusWindow_c::populate(puzzle_c * p) {
 
   Fl_Group * prev = Fl_Group::current();
   Fl_Group::current(0);
-  StatusProgress * stp = new StatusProgress;
+  auto stp = std::make_unique<StatusProgress>();
   stp->show();
 
   begin();
@@ -495,9 +497,9 @@ void statusWindow_c::populate(puzzle_c * p) {
     col+=2;
 
     if (v->getName().length())
-      snprintf(tmp, 200, "S%i - %s", s+1, v->getName().c_str());
+      snprintf(tmp, 200, "S%u - %s", s+1, v->getName().c_str());
     else
-      snprintf(tmp, 200, "S%i", s+1);
+      snprintf(tmp, 200, "S%u", s+1);
 
     b = new LFl_Box("", col, s+head);
     b->copy_label(tmp);
@@ -506,15 +508,15 @@ void statusWindow_c::populate(puzzle_c * p) {
     b->box(FL_FLAT_BOX);
     col += 2;
 
-    snprintf(tmp, 200, "%i", v->countState(voxel_c::VX_FILLED));
+    snprintf(tmp, 200, "%u", v->countState(voxel_c::VX_FILLED));
     (new LFl_Box("", col, s+head))->copy_label(tmp);
     col += 2;
 
-    snprintf(tmp, 200, "%i", v->countState(voxel_c::VX_VARIABLE));
+    snprintf(tmp, 200, "%u", v->countState(voxel_c::VX_VARIABLE));
     (new LFl_Box("", col, s+head))->copy_label(tmp);
     col += 2;
 
-    snprintf(tmp, 200, "%i", v->countState(voxel_c::VX_VARIABLE) + v->countState(voxel_c::VX_FILLED));
+    snprintf(tmp, 200, "%u", v->countState(voxel_c::VX_VARIABLE) + v->countState(voxel_c::VX_FILLED));
     (new LFl_Box("", col, s+head))->copy_label(tmp);
     col += 2;
     Fl::wait(0);
@@ -526,7 +528,7 @@ void statusWindow_c::populate(puzzle_c * p) {
 
     if (shapeKnown)
     {
-      snprintf(tmp, 200, "%i", shapeIdx+1);
+      snprintf(tmp, 200, "%u", shapeIdx+1);
       b = new LFl_Box("", col, s+head);
       b->copy_label(tmp);
       b->color(fltkPieceColor(shapeIdx));
@@ -541,7 +543,7 @@ void statusWindow_c::populate(puzzle_c * p) {
 
     if (shapeKnown)
     {
-      snprintf(tmp, 200, "%i", shapeIdx+1);
+      snprintf(tmp, 200, "%u", shapeIdx+1);
       b = new LFl_Box("", col, s+head);
       b->copy_label(tmp);
       b->color(fltkPieceColor(shapeIdx));
@@ -556,7 +558,7 @@ void statusWindow_c::populate(puzzle_c * p) {
 
     if (shapeKnown && shapeTrans < p->getGridType()->getSymmetries()->getNumTransformations())
     {
-      snprintf(tmp, 200, "%i", shapeIdx+1);
+      snprintf(tmp, 200, "%u", shapeIdx+1);
       b = new LFl_Box("", col, s+head);
       b->copy_label(tmp);
       b->color(fltkPieceColor(shapeIdx));
@@ -648,8 +650,7 @@ void statusWindow_c::populate(puzzle_c * p) {
     shapeTab.addSpace(s, voxelTable_c::PAR_MIRROR | voxelTable_c::PAR_COLOUR);
   }
 
-  stp->hide();
-  delete stp;
+  stp.reset();
 
   unsigned int col = 1;
 
