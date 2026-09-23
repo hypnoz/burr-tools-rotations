@@ -24,10 +24,14 @@
 #include "puzzle.h"
 #include "voxel.h"
 #include "assembly.h"
+#include "gridtype.h"
+#include "symmetries.h"
 
 #include "../tools/xml.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <thread>
 
 placementFinder_c::placementFinder_c(const problem_c & problem, const voxel_c * result) :
   prob(problem), res(result)
@@ -244,5 +248,48 @@ void assembler_c::assemble(std::function<bool(std::unique_ptr<assembly_c>)> call
   };
   fn_adapter_cb adapter(std::move(callback_fn));
   assemble(&adapter);
+}
+
+void assembler_c::prewarmSharedShapeCaches(const problem_c & problem) {
+
+  const symmetries_c * sym = problem.getPuzzle().getGridType()->getSymmetries();
+  const unsigned int numTrans = sym ? sym->getNumTransformationsMirror() : 0;
+
+  auto warm = [numTrans](const voxel_c * v) {
+    if (!v) return;
+
+    /* selfSymmetries() first: normalizeTransformation() goes through it for
+     * every placement, so it is the most frequently raced of the three
+     */
+    v->selfSymmetries();
+
+    for (unsigned int t = 0; t < numTrans; t++) {
+      int x, y, z;
+      int x1, x2, y1, y2, z1, z2;
+      v->getHotspot(t, &x, &y, &z);
+      v->getBoundingBox(t, &x1, &y1, &z1, &x2, &y2, &z2);
+    }
+  };
+
+  warm(getResultShape(problem));
+
+  for (unsigned int i = 0; i < problem.getNumberOfParts(); i++)
+    warm(problem.getPartShape(i));
+}
+
+unsigned int assembler_c::getEffectiveThreads(void) const {
+
+  if (numThreads > 0)
+    return numThreads;   /* already clamped by setNumThreads */
+
+  const char * env = getenv("BURRTOOLS_THREADS");
+  if (env && *env) {
+    int val = atoi(env);
+    if (val > 0)
+      return std::min(static_cast<unsigned int>(val), MAX_THREADS);
+  }
+
+  unsigned int hw = std::thread::hardware_concurrency();
+  return (hw > 0) ? std::min(hw, MAX_THREADS) : 1;
 }
 

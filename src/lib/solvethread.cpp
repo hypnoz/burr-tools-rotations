@@ -196,10 +196,10 @@ void solveThread_c::run(void){
       statsPhase = PHASE_ASSEMBLE;
       phaseOrigin = std::chrono::steady_clock::now();
       if (solverType == SOLVER_BT2) {
-        assemblerThreadCount = bt2ChooseAssemblerWorkers();
+        assemblerThreadCount = bt2ChooseAssemblerWorkers(a);
         assemblerThreadCount = bt2Assemble(a, this, assemblerThreadCount);
       } else {
-        assemblerThreadCount = 1;
+        assemblerThreadCount = a->getEffectiveThreads();
         a->assemble(this);
       }
       assemblyMs.store(elapsedMs(phaseOrigin), std::memory_order_relaxed);

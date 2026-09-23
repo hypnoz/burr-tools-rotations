@@ -11,11 +11,15 @@
 #include <thread>
 #include <vector>
 
-unsigned int bt2ChooseAssemblerWorkers(void) {
+unsigned int bt2ChooseAssemblerWorkers(const assembler_c * assm) {
 
 #ifdef NO_THREADING
+  (void)assm;
   return 1;
 #else
+  if (assm && assm->getNumThreads() > 0)
+    return assm->getEffectiveThreads();
+
   unsigned int hw = std::thread::hardware_concurrency();
   if (hw < 1)
     hw = 1;

@@ -278,6 +278,7 @@ void usage(void) {
   cout << "  -o n    select the problem to solve\n";
   cout << "  -o all  solves all problems in file\n";
   cout << "  -x      only redisassemble the given solutions\n";
+  cout << "  -t n    set number of worker threads for assembler (0 = auto)\n";
   cout << "  --solver TYPE\n";
   cout << "          solver engine. If omitted, BurrTools Classic is used.\n";
   cout << "          TYPE (case-insensitive; quotes needed if it has spaces):\n";
@@ -314,6 +315,7 @@ int main(int argv, char* args[]) {
   bool reduce = false;
   bool newline = true;
   bool ask = false;
+  unsigned int threads = 0;
   enum {
     W_NUM_SOLUTIONS,
     W_SOLUTION_PIECES,
@@ -343,6 +345,24 @@ int main(int argv, char* args[]) {
           fprintf(stderr, "         (also: classic, crowell, bt2)\n");
           return 2;
         }
+        i++;
+      } else if (strcmp(args[i], "-t") == 0) {
+        /* -t as the last argument used to pass the null terminator to atoi
+         * before dereferencing; strtol rather than atoi so that a negative or
+         * non-numeric value is rejected instead of wrapping into a huge
+         * unsigned thread count
+         */
+        if (i + 1 >= argv) {
+          cout << "-t requires a numeric argument\n";
+          return 2;
+        }
+        char *end = nullptr;
+        long t = strtol(args[i+1], &end, 10);
+        if (!end || *end || t < 0) {
+          cout << "-t requires a non-negative number\n";
+          return 2;
+        }
+        threads = (unsigned int)t;
         i++;
       } else if (strcmp(args[i], "-o") == 0) {
         if (i + 1 >= argv) {
@@ -516,6 +536,8 @@ int main(int argv, char* args[]) {
       problem_c * problem = p.getProblem(pr);
 
       auto assm = p.getGridType()->findAssembler(*problem, jsonOutput, solverType);
+      if (threads > 0)
+        assm->setNumThreads(threads);
 
       switch (assm->createMatrix(false, false, false)) {
       case assembler_c::ERR_TOO_MANY_UNITS:
@@ -547,6 +569,7 @@ int main(int argv, char* args[]) {
         return jsonOutput ? 1 : 0;
       case assembler_c::ERR_CAN_NOT_RESTORE_VERSION:
       case assembler_c::ERR_CAN_NOT_RESTORE_SYNTAX:
+      case assembler_c::ERR_CAN_NOT_RESTORE_INTERRUPTED:
         /* all other errors should not occur */
         if (jsonOutput)
           fprintf(stderr, "Oops internal error\n");
@@ -577,7 +600,7 @@ int main(int argv, char* args[]) {
         d = createDisassembler(*problem, checkRotations, solverType);
 
       if (solverType == SOLVER_BT2)
-        bt2Assemble(assm.get(), &a, bt2ChooseAssemblerWorkers());
+        bt2Assemble(assm.get(), &a, bt2ChooseAssemblerWorkers(assm.get()));
       else
         assm->assemble(&a);
 

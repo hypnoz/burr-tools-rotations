@@ -24,11 +24,14 @@
 #include "assembler.h"
 #include "bt_classic_solver.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <atomic>
 #include <vector>
 #include <set>
 #include <stack>
-#include <atomic>
+#include <unordered_set>
+#include <mutex>
 #include <memory>
 
 class gridType_c;
@@ -69,7 +72,7 @@ private:
   std::atomic<bool> abbort;
 
   /* used to save if the search is running */
-  bool running = false;
+  std::atomic<bool> running{false};
 
   /* cover one column:
    * - remove the column from the column header node list,
@@ -211,6 +214,40 @@ private:
 
   unsigned int clumpify(void);
 
+  /* multi-threading support */
+  friend class assemblerWorker_c;
+
+  struct PrefixStep {
+    unsigned int col;
+    unsigned int row;
+  };
+
+  struct SubtreeTask {
+    std::vector<PrefixStep> prefix;
+  };
+
+  std::vector<SubtreeTask> parallelTasks;
+  std::vector<uint8_t> taskCompleted;
+  std::unordered_set<uint64_t> emittedSignatures;
+
+  /* set when a parallel search stopped before finishing.
+   *
+   * The serial search saves an exact resume point (pos plus the row/column
+   * prefix). A parallel search has no single such point: progress lives in
+   * taskCompleted plus whatever each worker had reached inside the task it was
+   * in the middle of, and the assemblies already handed to the callback are
+   * only remembered in emittedSignatures, which does not survive a save.
+   * Writing pos == 0 in that situation would claim "nothing searched yet"
+   * next to a solution list that is already populated, and continuing would
+   * report every one of those assemblies a second time. So an interrupted
+   * parallel search is marked here, saved as not resumable, and restarted
+   * from scratch on load with the counters reset.
+   */
+  bool parallelInterrupted = false;
+
+  void generateSubtreeTasks(std::vector<SubtreeTask> & tasks, unsigned int targetTasks, unsigned int maxDepth);
+  void parallelMultiSearch(unsigned int workers);
+
 protected:
 
   /* as this is only a back end doing the processing on the matrix, there needs to
@@ -286,7 +323,7 @@ public:
   int getErrorsParam(void) override { return errorsParam; }
   float getFinished(void) const override;
   void stop(void) override { abbort.store(true, std::memory_order_relaxed); }
-  bool stopped(void) const override { return !running; }
+  bool stopped(void) const override { return !running.load(std::memory_order_relaxed); }
   errState setPosition(const char * string, const char * version) override;
   void save(xmlWriter_c & xml) const override;
   void reduce(void) override;

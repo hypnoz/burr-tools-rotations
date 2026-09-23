@@ -11,8 +11,11 @@
 class assembler_c;
 class assembler_cb;
 
-/** hardware_concurrency()-2, min 1, cap 16. 1 if threading is disabled. */
-unsigned int bt2ChooseAssemblerWorkers(void);
+/** Worker count for BurrTools 2 assembly.
+ * If assm has an explicit setNumThreads() value, that count is used.
+ * Otherwise hardware_concurrency()-2, min 1, cap 16. 1 if threading is disabled.
+ */
+unsigned int bt2ChooseAssemblerWorkers(const assembler_c * assm = nullptr);
 
 /**
  * Search the prepared assembler with first-level DLX tree-split when possible.
