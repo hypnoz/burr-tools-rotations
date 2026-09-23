@@ -55,14 +55,17 @@ namespace {
     {"&Edit",            0, 0, 0, FL_SUBMENU, 0, 0, 14, 56},
       {"Undo",    FL_COMMAND+'z', cb_Undo_stub,  0, FL_MENU_INACTIVE, 0, 0, 14, 56},
       {"Redo",    FL_COMMAND+FL_SHIFT+'z', cb_Redo_stub, 0, FL_MENU_INACTIVE, 0, 0, 14, 56},
-      {"Notes",          0, cb_ShowNotes_stub,   0, 0, 0, 0, 14, 56},
+      {"Show Notes",     0, cb_ToggleNotes_stub, 0, 0, 0, 0, 14, 56},
       {"Toggle 3D", FL_F + 4, cb_Toggle3D_stub,  0, 0, 0, 0, 14, 56},
       {"Convert brick grid type to other", 0, cb_Convert_stub, 0, 0, 0, 0, 14, 56},
       {"Convert assemblies to pieces", 0, cb_AssembliesToShapes_stub, 0, FL_MENU_DIVIDER, 0, 0, 14, 56},
       {"Display normally with shape color", 0, cb_ViewMode0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
       {"Display with colour constraint colors", 0, cb_ViewMode1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
       {"Display in anaglyph mode", 0, cb_ViewMode2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-      {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
+      {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO | FL_MENU_DIVIDER, 0, 0, 14, 56},
+      {"Draw each voxel separately", 0, cb_RenderStyle0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
+      {"Draw flat faces with edges", 0, cb_RenderStyle1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
+      {"Draw pieces like STL export", 0, cb_RenderStyle2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
       { },
     {"Settings",         0, cb_Config_stub,      0, 0, 0, 0, 14, 56},
     {"Tutorial",         0, cb_Tutorial_stub,    0, 0, 0, 0, 14, 56},
@@ -77,8 +80,8 @@ namespace {
    * gather under Puzzle, and every item that opens a dialog gains an
    * ellipsis.
    *
-   * Edit keeps Undo/Redo/Notes and the convert actions; view modes live
-   * under View with Toggle 3D.
+   * Edit keeps Undo/Redo and the convert actions; view modes live
+   * under View with Show Notes and Toggle 3D.
    *
    * About, Settings and Quit are deliberately absent: they belong to the
    * application menu, built in installApplicationMenu() below.
@@ -104,16 +107,19 @@ namespace {
     { "&Edit",             0, 0, 0, FL_SUBMENU, 0, 0, 0, 0 },
       {"Undo",    FL_COMMAND+'z', cb_Undo_stub,  0, FL_MENU_INACTIVE, 0, 0, 14, 56},
       {"Redo",    FL_COMMAND+FL_SHIFT+'z', cb_Redo_stub, 0, FL_MENU_INACTIVE | FL_MENU_DIVIDER, 0, 0, 14, 56},
-      {"Notes",          0, cb_ShowNotes_stub,   0, 0, 0, 0, 14, 56},
       {"Convert brick grid type to other...", 0, cb_Convert_stub, 0, 0, 0, 0, 14, 56},
       {"Convert assemblies to pieces...", 0, cb_AssembliesToShapes_stub, 0, 0, 0, 0, 14, 56},
       { },
     { "&View",             0, 0, 0, FL_SUBMENU, 0, 0, 0, 0 },
+      {"Show Notes",       0, cb_ToggleNotes_stub, 0, 0, 0, 0, 14, 56},
       {"Toggle 3D",        FL_COMMAND + '3', cb_Toggle3D_stub, 0, FL_MENU_DIVIDER, 0, 0, 14, 56},
       {"Display normally with shape color", 0, cb_ViewMode0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
       {"Display with colour constraint colors", 0, cb_ViewMode1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
       {"Display in anaglyph mode", 0, cb_ViewMode2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-      {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
+      {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO | FL_MENU_DIVIDER, 0, 0, 14, 56},
+      {"Draw each voxel separately", 0, cb_RenderStyle0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
+      {"Draw flat faces with edges", 0, cb_RenderStyle1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
+      {"Draw pieces like STL export", 0, cb_RenderStyle2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
       { },
     { "Help",              0, 0, 0, FL_SUBMENU, 0, 0, 0, 0 },
       {"Tutorial",         0, cb_Tutorial_stub, 0, 0, 0, 0, 14, 56},

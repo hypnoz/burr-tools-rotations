@@ -1988,34 +1988,31 @@ void mainWindow_c::cb_Config(void) {
   activateConfigOptions();
 }
 
-static void cb_ToggleNotes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ToggleNotes(); }
+void cb_ToggleNotes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ToggleNotes(); }
 void mainWindow_c::cb_ToggleNotes(void) {
 
-  if (notesPanel->visible()) {
+  if (notesPanel->visible())
     notesPanel->hide();
-    notesToggle->copy_label("Show Notes");
-  } else {
+  else
     notesPanel->show();
-    notesToggle->copy_label("Hide Notes");
-  }
-  notesToggle->redraw();
+
+  updateNotesMenuLabel();
   if (contentTile)
     contentTile->forceLayout();
   relayoutViewStack();
 }
 
-void cb_ShowNotes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ShowNotes(); }
-void mainWindow_c::cb_ShowNotes(void) {
+void mainWindow_c::updateNotesMenuLabel(void) {
 
-  if (notesPanel->visible())
+  if (!MainMenu)
     return;
 
-  notesPanel->show();
-  notesToggle->copy_label("Hide Notes");
-  notesToggle->redraw();
-  if (contentTile)
-    contentTile->forceLayout();
-  relayoutViewStack();
+  const int idx = liveMenuIndex(MainMenu, cb_ToggleNotes_stub);
+  if (idx < 0)
+    return;
+
+  MainMenu->replace(idx, notesPanel->visible() ? "Hide Notes" : "Show Notes");
+  MainMenu->update();
 }
 
 static void cb_NotesUpdate_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_NotesUpdate(); }
@@ -2219,6 +2216,9 @@ void cb_ViewMode0_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewM
 void cb_ViewMode1_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(1); }
 void cb_ViewMode2_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(2); }
 void cb_ViewMode3_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(3); }
+void cb_RenderStyle0_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_RenderStyle(0); }
+void cb_RenderStyle1_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_RenderStyle(1); }
+void cb_RenderStyle2_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_RenderStyle(2); }
 
 static int viewModeMenuIdx[4];
 
@@ -2245,6 +2245,32 @@ void mainWindow_c::cb_ViewMode(int mode) {
   }
 
   StatusLine->setColorModeIndex(mode);
+  cb_Status();
+}
+
+void mainWindow_c::syncRenderStyleMenu(void) {
+
+  static Fl_Callback * const cbs[3] = {
+    cb_RenderStyle0_stub, cb_RenderStyle1_stub, cb_RenderStyle2_stub
+  };
+
+  if (!MainMenu || !StatusLine)
+    return;
+
+  const int mode = StatusLine->getRenderStyleIndex();
+  Fl_Menu_Item * items = const_cast<Fl_Menu_Item *>(MainMenu->menu());
+  for (int i = 0; i < 3; i++) {
+    int idx = liveMenuIndex(MainMenu, cbs[i]);
+    if (idx < 0) continue;
+    if (i == mode) items[idx].set();
+    else items[idx].clear();
+  }
+  MainMenu->update();
+}
+
+void mainWindow_c::cb_RenderStyle(int mode) {
+  StatusLine->setRenderStyleIndex(mode);
+  syncRenderStyleMenu();
   cb_Status();
 }
 
@@ -2959,14 +2985,17 @@ Fl_Menu_Item mainWindow_c::menu_MainMenu[] = {
   {"&Edit",            0, 0, 0, FL_SUBMENU, 0, 0, 14, 56},
     {"Undo",    FL_COMMAND+'z', cb_Undo_stub,  0, FL_MENU_INACTIVE, 0, 0, 14, 56},
     {"Redo",    FL_COMMAND+FL_SHIFT+'z', cb_Redo_stub, 0, FL_MENU_INACTIVE, 0, 0, 14, 56},
-    {"Notes",          0, cb_ShowNotes_stub,   0, 0, 0, 0, 14, 56},
+    {"Show Notes",     0, cb_ToggleNotes_stub, 0, 0, 0, 0, 14, 56},
     {"Toggle 3D", FL_F + 4, cb_Toggle3D_stub,  0, 0, 0, 0, 14, 56},
     {"Convert brick grid type to other", 0, cb_Convert_stub, 0, 0, 0, 0, 14, 56},
     {"Convert assemblies to pieces", 0, cb_AssembliesToShapes_stub, 0, FL_MENU_DIVIDER, 0, 0, 14, 56},
     {"Display normally with shape color", 0, cb_ViewMode0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
     {"Display with colour constraint colors", 0, cb_ViewMode1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
     {"Display in anaglyph mode", 0, cb_ViewMode2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-    {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
+    {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO | FL_MENU_DIVIDER, 0, 0, 14, 56},
+    {"Draw each voxel separately", 0, cb_RenderStyle0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
+    {"Draw flat faces with edges", 0, cb_RenderStyle1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
+    {"Draw pieces like STL export", 0, cb_RenderStyle2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
     { },
   {"Settings",         0, cb_Config_stub,      0, 0, 0, 0, 14, 56},
   {"Tutorial",         0, cb_Tutorial_stub,    0, 0, 0, 0, 14, 56},
@@ -3241,14 +3270,25 @@ int mainWindow_c::findMenuEntry(const char * txt) {
 
 void mainWindow_c::initViewMenuIcons(void) {
 
-  static pixmapList_c pm;
-  static Fl_Multi_Label ml[4];
   static const char * names[4] = {
     "Display normally with shape color",
     "Display with colour constraint colors",
     "Display in anaglyph mode",
     "Display in anaglyph mode with glasses swapped"
   };
+
+  for (int i = 0; i < 4; i++)
+    viewModeMenuIdx[i] = mainWindow_c::findMenuEntry(names[i]);
+
+#ifdef __APPLE__
+  /* Fl_Sys_Menu_Bar turns Fl_Multi_Label image+text items into blank native
+   * rows (the radio check still appears). Keep the text labels so View is
+   * readable on the system menu bar.
+   */
+  return;
+#else
+  static pixmapList_c pm;
+  static Fl_Multi_Label ml[4];
   static const char ** xpms[4] = {
     ViewModeNormal_xpm,
     ViewModeColor_xpm,
@@ -3260,7 +3300,6 @@ void mainWindow_c::initViewMenuIcons(void) {
   };
 
   for (int i = 0; i < 4; i++) {
-    viewModeMenuIdx[i] = mainWindow_c::findMenuEntry(names[i]);
     ml[i].typea = FL_IMAGE_LABEL;
     ml[i].labela = (const char *)pm.get(xpms[i]);
     ml[i].typeb = FL_NORMAL_LABEL;
@@ -3275,6 +3314,7 @@ void mainWindow_c::initViewMenuIcons(void) {
       }
     }
   }
+#endif
 }
 
 void mainWindow_c::selectEntitiesTab(bool resetZoom) {
@@ -5271,13 +5311,24 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   const int notesMinH = NOTES_TEXT_MIN_H + 5 + notesBtnH + 8;
   const int notesButtonsFloorH = notesBtnH + 8;
 
-  layouter_c * menuRow = new layouter_c(0, 0, 1, 1);
-
 #ifdef __APPLE__
+  /* The system menu bar is not a layout child, so do not reserve a row
+   * for it. Content starts at the top of the window.
+   */
   LFl_Sys_Menu_Bar * menuBar = new LFl_Sys_Menu_Bar(0, 0, 1, 1);
+  MainMenu = menuBar;
+  menuBar->copy(mainmenu::table(), this);
+  initViewMenuIcons();
+  menuBar->update();
+  mainmenu::installApplicationMenu(this);
+
+  StatusLine = new LStatusLine(0, 1, 1, 1);
+  StatusLine->weight(1, 0);
+  syncRenderStyleMenu();
+
+  layouter_c * contentRow = new LFl_Tile(0, 0, 1, 1);
 #else
   LFl_Menu_Bar * menuBar = new LFl_Menu_Bar(0, 0, 1, 1);
-#endif
   MainMenu = menuBar;
   menuBar->copy(mainmenu::table(), this);
   initViewMenuIcons();
@@ -5285,29 +5336,16 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   mainmenu::installApplicationMenu(this);
   menuBar->weight(1, 0);
 
-  notesToggle = new LFlatButton_c(1, 0, 1, 1, "Show Notes",
-                                  " Show or hide the puzzle notes panel ",
-                                  cb_ToggleNotes_stub, this);
-  notesToggle->box(FL_FLAT_BOX);
-  notesToggle->down_box(FL_FLAT_BOX);
-  notesToggle->labelsize(14);
-  {
-    int tw = 0, th = 0;
-    fl_font(notesToggle->labelfont(), notesToggle->labelsize());
-    fl_measure("Hide Notes", tw, th);
-    notesToggle->setMinimumSize(tw + 16, 25);
-  }
-
-  menuRow->end();
-
   StatusLine = new LStatusLine(0, 2, 1, 1);
   StatusLine->weight(1, 0);
+  syncRenderStyleMenu();
 
   layouter_c * contentRow = new LFl_Tile(0, 1, 1, 1);
+#endif
   contentTile = (LFl_Tile*)contentRow;
   contentRow->weight(1, 1);
   /* Let this row shrink below the tabs/3D preferred height so the notes
-   * button row can stay in the visible window instead of overflowing. */
+   * panel Update/Revert row can stay in the visible window. */
   contentRow->setShrinkMinSize(0, notesButtonsFloorH);
 
   LFl_Tile * mainTile = new LFl_Tile(0, 0, 1, 1);

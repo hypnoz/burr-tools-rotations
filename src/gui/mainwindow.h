@@ -142,7 +142,6 @@ class mainWindow_c : public LFl_Double_Window {
 
   Fl_Group *MinSizeTools;
   Fl_Menu_Bar *MainMenu;
-  LFlatButton_c *notesToggle;
   layouter_c *notesPanel;
   LFl_Tile *contentTile;
   LFl_Text_Editor *notesInput;
@@ -334,7 +333,7 @@ public:
   void cb_Help(void);
   void cb_Config(void);
   void cb_ToggleNotes(void);
-  void cb_ShowNotes(void);
+  void updateNotesMenuLabel(void);
   void cb_NotesUpdate(void);
   void cb_NotesRevert(void);
   void cb_NotesChanged(void);
@@ -342,6 +341,8 @@ public:
   void relayoutViewStack(void);
   void cb_Toggle3D(void);
   void cb_ViewMode(int mode);
+  void cb_RenderStyle(int mode);
+  void syncRenderStyleMenu(void);
   void cb_SolProbSel(LBlockListGroup_c* reason);
 
   void cb_ShapeGroup(void);

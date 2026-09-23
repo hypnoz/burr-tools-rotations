@@ -86,11 +86,14 @@ void cb_Load_Scad_stub(Fl_Widget*, void*);
 void cb_Export_Scad_stub(Fl_Widget*, void*);
 void cb_Undo_stub(Fl_Widget*, void*);
 void cb_Redo_stub(Fl_Widget*, void*);
-void cb_ShowNotes_stub(Fl_Widget*, void*);
+void cb_ToggleNotes_stub(Fl_Widget*, void*);
 void cb_ViewMode0_stub(Fl_Widget*, void*);
 void cb_ViewMode1_stub(Fl_Widget*, void*);
 void cb_ViewMode2_stub(Fl_Widget*, void*);
 void cb_ViewMode3_stub(Fl_Widget*, void*);
+void cb_RenderStyle0_stub(Fl_Widget*, void*);
+void cb_RenderStyle1_stub(Fl_Widget*, void*);
+void cb_RenderStyle2_stub(Fl_Widget*, void*);
 void cb_Tutorial_stub(Fl_Widget*, void*);
 
 #endif
