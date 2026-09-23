@@ -1348,7 +1348,13 @@ std::unique_ptr<separation_c> makeSeparation(std::unique_ptr<separation_c> remov
 
 } // namespace
 
-TEST_CASE("separation tree: movesText appends the removed child's moves after the left child's", "[disasm][separation]") {
+/* Fork notation: movesText() emits one segment per single-piece removal
+   (separation_c::movesTextPieceRemovals). A node that splits the puzzle into
+   two groups emits nothing of its own; its moves are carried into the first
+   removal of the removed branch, which is reported before the left branch,
+   in the order the solve animation plays them. BurrTools 0.7.1 and upstream
+   print one segment per tree node instead, left branch first. */
+TEST_CASE("separation tree: movesText carries a split's moves into the removed child, reported before the left child", "[disasm][separation]") {
 
   SECTION("both children report -- the removed child's numbers come last") {
     // root(2 moves) with left(2 moves) and removed(3 moves); both children
@@ -1365,10 +1371,8 @@ TEST_CASE("separation tree: movesText appends the removed child's moves after th
 
     const std::string got = root->movesText();
 
-    // "2.2.3", not "2.2" -- the trailing 3 is the removed child, and it is
-    // the last component, which is what distinguishes the removed branch
-    // from the left one
-    CHECK(got == "2.2.3");
+    // the root's 2 moves go to the removed child (2+3), then the left child
+    CHECK(got == "5.2");
     CHECK(root->sumMoves() == 7u);
     CHECK(root->getNumSequences() == 3u);
   }
@@ -1384,7 +1388,8 @@ TEST_CASE("separation tree: movesText appends the removed child's moves after th
 
     const std::string got = root->movesText();
 
-    CHECK(got == "2.3");
+    // a single-move child still gets its own segment in the fork notation
+    CHECK(got == "5.1");
   }
 
   SECTION("a removed child of a single move contributes nothing -- the loaded-tree case") {
@@ -1396,7 +1401,7 @@ TEST_CASE("separation tree: movesText appends the removed child's moves after th
 
     const std::string got = root->movesText();
 
-    CHECK(got == "2.2");
+    CHECK(got == "3.2");
   }
 }
 
@@ -1420,7 +1425,7 @@ TEST_CASE("separation tree: movesText stops at its internal buffer instead of ov
   // rather than an upper bound means a recursion that bailed out early --
   // returning "2", say -- fails here instead of satisfying "< 256" by
   // accident. The string is still well formed: only digits and separators.
-  CHECK(got.size() == 253);
+  CHECK(got.size() == 255);
   CHECK(got.find_first_not_of("0123456789.") == std::string::npos);
 
   // and the tree really is the deep one, so 399 characters is what the

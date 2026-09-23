@@ -102,7 +102,8 @@ TEST_CASE("Pelikan Burr solver regression (GT_BRICKS)", "[solver][pelikan]") {
   CHECK(res.assemblies == 12);
   CHECK(res.solutions == 1);
   CHECK(res.iterations > 0);
-  CHECK(res.moveLevel == "98.2.4.2");
+  // fork notation (one segment per single-piece removal); 0.7.1 prints "98.2.4.2"
+  CHECK(res.moveLevel == "99.3.4.2");
   REQUIRE(res.firstSolutionAssembly != nullptr);
   CHECK(res.firstSolutionAssembly->placementCount() == 7);
 }
