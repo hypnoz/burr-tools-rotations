@@ -326,8 +326,9 @@ public:
   //@}
 
   /** \name edit color placement constraints.
-   * the color 0 in this functions is always ignored as the placement
-   * of color 0 is always possible
+   * Colour 0 is neutral (no constraint). Unless strict is set, a neutral
+   * voxel on either side may occupy any colour. With strict, a voxel may
+   * only occupy a result voxel of the same colour, neutral included.
    */
   //@{
   /** allow placing pieces of one color into a result color */
@@ -335,7 +336,7 @@ public:
   /** disallow the placing */
   void disallowPlacement(unsigned int pc, unsigned int res);
   /** check if placing is allowed */
-  bool placementAllowed(unsigned int pc, unsigned int res) const;
+  bool placementAllowed(unsigned int pc, unsigned int res, bool strict = false) const;
   //@}
 
   /** \name grouping information.

@@ -33,11 +33,9 @@ static char bt_file_chooser_result[4096];
 /* While the native dialog is up the window behind it may be dimmed by the
  * window system. An Fl_Gl_Window does not receive that dim and paints it
  * itself (see platform::modalDimWash), but only when it is asked to
- * redraw -- and nothing damages it meanwhile, because FLTK is just pumping
- * Fl::wait() inside the dialog. So drive the redraw for the duration.
+ * redraw. One redraw after the sheet is up is enough: repeating it
+ * swaps the OpenGL buffer over and over and the 3D view flashes.
  */
-static const double GL_REDRAW_INTERVAL = 0.1;
-
 static void redrawGlViews(Fl_Widget * w)
 {
   if (dynamic_cast<Fl_Gl_Window *>(w))
@@ -57,10 +55,9 @@ static void redrawAllGlViews(void)
     redrawGlViews(w);
 }
 
-static void glRedrawPump(void *)
+static void glRedrawOnce(void *)
 {
   redrawAllGlViews();
-  Fl::repeat_timeout(GL_REDRAW_INTERVAL, glRedrawPump);
 }
 
 static const char * run_file_chooser(const char *title, const char *pattern, const char *preset, int type)
@@ -77,9 +74,9 @@ static const char * run_file_chooser(const char *title, const char *pattern, con
   if (preset && preset[0])
     chooser.preset_file(preset);
 
-  Fl::add_timeout(GL_REDRAW_INTERVAL, glRedrawPump);
+  Fl::add_timeout(0.1, glRedrawOnce);
   const int shown = chooser.show();
-  Fl::remove_timeout(glRedrawPump);
+  Fl::remove_timeout(glRedrawOnce);
   redrawAllGlViews();
 
   if (shown != 0)

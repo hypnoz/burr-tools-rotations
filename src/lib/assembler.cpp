@@ -33,7 +33,7 @@
 #include <cstdlib>
 #include <thread>
 
-placementFinder_c::placementFinder_c(const problem_c & problem, const voxel_c * result) :
+placementFinder_c::placementFinder_c(const problem_c & problem, const voxel_c * result, bool strictColors) :
   prob(problem), res(result)
 {
   colorTableWidth = problem.getPuzzle().colorNumber() + 1;
@@ -42,7 +42,7 @@ placementFinder_c::placementFinder_c(const problem_c & problem, const voxel_c * 
     colorAllowed.resize(colorTableWidth * colorTableWidth);
     for (unsigned int p = 0; p < colorTableWidth; p++)
       for (unsigned int r = 0; r < colorTableWidth; r++)
-        colorAllowed[p * colorTableWidth + r] = problem.placementAllowed(p, r) ? 1 : 0;
+        colorAllowed[p * colorTableWidth + r] = problem.placementAllowed(p, r, strictColors) ? 1 : 0;
   }
 
   /* all non empty voxels of the result, these are the only voxels a filled
@@ -216,8 +216,9 @@ void placementFinder_c::find(const voxel_c * rotation,
   }
 }
 
-assembler_c::errState assembler_c::createMatrix(bool /*keepMirror*/, bool /*keepRotations*/, bool /*complete*/)
+assembler_c::errState assembler_c::createMatrix(bool /*keepMirror*/, bool /*keepRotations*/, bool /*complete*/, bool strictColors)
 {
+  strictColorRestrictions = strictColors;
   return ERR_NONE;
 }
 

@@ -113,6 +113,18 @@ void solveThread_c::run(void){
     /* first check, if there is an assembler available with the
      * problem, if there is one take that
      */
+    const bool strictColors = (parameters & PAR_STRICT_COLORS) != 0;
+
+    /* A prepared assembler bakes colour matching into its placement matrix.
+     * A different strictness, or a saved resume point from a run that did not
+     * record this option, cannot be continued.
+     */
+    if (puzzle.getAssembler() &&
+        puzzle.getAssembler()->usesStrictColorRestrictions() != strictColors)
+      puzzle.removeAllSolutions();
+    else if (!puzzle.getAssembler() && strictColors)
+      puzzle.removeAllSolutions();
+
     if (puzzle.getAssembler()) {
       a = puzzle.getAssembler();
       assm.store(a, std::memory_order_release);
@@ -129,7 +141,7 @@ void solveThread_c::run(void){
       a = new_assm.get();
       assm.store(a, std::memory_order_release);
 
-      errState = a->createMatrix(parameters & PAR_KEEP_MIRROR, parameters & PAR_KEEP_ROTATIONS, parameters & PAR_COMPLETE_ROTATIONS);
+      errState = a->createMatrix(parameters & PAR_KEEP_MIRROR, parameters & PAR_KEEP_ROTATIONS, parameters & PAR_COMPLETE_ROTATIONS, strictColors);
       prepareMs.store(elapsedMs(phaseOrigin), std::memory_order_relaxed);
       statsPhase = PHASE_NONE;
       if (errState != assembler_c::ERR_NONE) {

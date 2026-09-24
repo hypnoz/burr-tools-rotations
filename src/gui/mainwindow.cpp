@@ -1133,6 +1133,7 @@ void mainWindow_c::cb_BtnCont(bool prep_only) {
   int par = solveThread_c::PAR_REDUCE;
   if (KeepMirrors->value() != 0) par |= solveThread_c::PAR_KEEP_MIRROR;
   if (KeepRotations->value() != 0) par |= solveThread_c::PAR_KEEP_ROTATIONS;
+  if (StrictColors->value() != 0) par |= solveThread_c::PAR_STRICT_COLORS;
   if (DropDisassemblies->value() != 0) par |= solveThread_c::PAR_DROP_DISASSEMBLIES;
   if (SolveDisasm->value() != 0) par |= solveThread_c::PAR_DISASSM;
   if (CheckRotations->value() != 0) par |= solveThread_c::PAR_CHECK_ROTATIONS;
@@ -1230,6 +1231,30 @@ void mainWindow_c::updateSolverOptionCheckboxes(void) {
     } else {
       CheckRotations->activate();
     }
+  }
+
+  /* Symmetry filter options:
+   * Keep Rotated turns the filter off entirely, so Deep and Keep Mirror are moot.
+   * Deep only runs when the filter is active, so it conflicts with Keep Rotated.
+   */
+  const bool keepRotations = KeepRotations->value() != 0;
+  const bool deepSymmetry = CompleteRotations->value() != 0;
+
+  if (keepRotations) {
+    CompleteRotations->value(0);
+    CompleteRotations->deactivate();
+    KeepMirrors->value(0);
+    KeepMirrors->deactivate();
+    KeepRotations->activate();
+  } else if (deepSymmetry) {
+    KeepRotations->value(0);
+    KeepRotations->deactivate();
+    CompleteRotations->activate();
+    KeepMirrors->activate();
+  } else {
+    CompleteRotations->activate();
+    KeepMirrors->activate();
+    KeepRotations->activate();
   }
 }
 
@@ -4781,19 +4806,26 @@ void mainWindow_c::CreateSolveTab(void) {
     DropDisassemblies->clear_visible_focus();
     DropDisassemblies->callback(cb_SolverOptions_stub, this);
 
-    updateSolverOptionCheckboxes();
-
     CompleteRotations = new LFl_Check_Button("Deep Symmetry Check", 1, 0, 1, 1);
     CompleteRotations->tooltip(" Do expensive and thorough rotation check, eliminating translations and rotations not in symmetry of the result shape ");
     CompleteRotations->clear_visible_focus();
+    CompleteRotations->callback(cb_SolverOptions_stub, this);
 
     KeepMirrors = new LFl_Check_Button("Keep Mirror Solutions", 1, 1, 1, 1);
     KeepMirrors->tooltip(" Don't remove solutions that are mirrors of another solution ");
     KeepMirrors->clear_visible_focus();
+    KeepMirrors->callback(cb_SolverOptions_stub, this);
 
     KeepRotations = new LFl_Check_Button("Keep Rotated Solutions", 1, 2, 1, 1);
     KeepRotations->tooltip(" Don't remove solutions that are rotations of other solutions ");
     KeepRotations->clear_visible_focus();
+    KeepRotations->callback(cb_SolverOptions_stub, this);
+
+    StrictColors = new LFl_Check_Button("Strict Color Restrictions", 1, 3, 1, 1);
+    StrictColors->tooltip(" A voxel with a colour fits only a result voxel of that same colour, not a neutral one. A voxel with no colour fits only a result voxel that also has no colour. ");
+    StrictColors->clear_visible_focus();
+
+    updateSolverOptionCheckboxes();
 
     o->end();
 

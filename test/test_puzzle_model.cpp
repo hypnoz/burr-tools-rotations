@@ -1214,3 +1214,32 @@ TEST_CASE("assembly: createSpace assembles a voxel space matching the problem's 
         }
       }
 }
+
+TEST_CASE("problem: strict colour placement requires an exact colour match",
+          "[model][puzzle][color]") {
+  puzzle_c puzzle(std::make_unique<gridType_c>(gridType_c::GT_BRICKS));
+  puzzle.addShape(1, 1, 1);
+  problem_c * pr = puzzle.getProblem(puzzle.addProblem());
+
+  puzzle.addColor(255, 0, 0);
+  puzzle.addColor(0, 255, 0);
+  pr->allowPlacement(1, 1);
+  pr->allowPlacement(1, 2);
+
+  // Loose: neutral is a wildcard, and the explicit pair is allowed.
+  REQUIRE(pr->placementAllowed(0, 0));
+  REQUIRE(pr->placementAllowed(1, 0));
+  REQUIRE(pr->placementAllowed(0, 1));
+  REQUIRE(pr->placementAllowed(1, 1));
+  REQUIRE(pr->placementAllowed(1, 2));
+  REQUIRE_FALSE(pr->placementAllowed(2, 1));
+
+  // Strict: same colour only. The cross-colour pair and both wildcards close.
+  REQUIRE(pr->placementAllowed(0, 0, true));
+  REQUIRE(pr->placementAllowed(1, 1, true));
+  REQUIRE(pr->placementAllowed(2, 2, true));
+  REQUIRE_FALSE(pr->placementAllowed(1, 0, true));
+  REQUIRE_FALSE(pr->placementAllowed(0, 1, true));
+  REQUIRE_FALSE(pr->placementAllowed(1, 2, true));
+  REQUIRE_FALSE(pr->placementAllowed(2, 1, true));
+}

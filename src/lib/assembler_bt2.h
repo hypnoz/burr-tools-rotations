@@ -290,7 +290,7 @@ public:
 
   /* functions that are overloaded from assembler_c, for comments see there */
   using assembler_c::assemble;
-  errState createMatrix(bool keepMirror, bool keepRotations, bool complete) override;
+  errState createMatrix(bool keepMirror, bool keepRotations, bool complete, bool strictColors = false) override;
   void applySolutionFilterFlags(bool keepMirror, bool keepRotations, bool complete) override;
   void assemble(assembler_cb * callback) override;
   std::unique_ptr<assembler_c> clonePrepared(void) override;

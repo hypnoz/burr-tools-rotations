@@ -54,7 +54,7 @@ class placementFinder_c {
 
 public:
 
-  placementFinder_c(const problem_c & problem, const voxel_c * result);
+  placementFinder_c(const problem_c & problem, const voxel_c * result, bool strictColors = false);
 
   /**
    * find all placements of the given rotated piece.
@@ -160,7 +160,10 @@ public:
    * when keep mirror is true, the assembler must not throw away mirror solutions
    * but it still removes solutions that are rotations.
    */
-  virtual errState createMatrix(bool /*keepMirror*/, bool /*keepRotations*/, bool /*complete*/);
+  virtual errState createMatrix(bool /*keepMirror*/, bool /*keepRotations*/, bool /*complete*/, bool /*strictColors*/ = false);
+
+  /** True when this assembler's matrix was built with strict colour matching. */
+  bool usesStrictColorRestrictions(void) const { return strictColorRestrictions; }
 
   /** Re-apply mirror/rotation filter flags after createMatrix when reusing an assembler. */
   virtual void applySolutionFilterFlags(bool keepMirror, bool keepRotations, bool complete);
@@ -350,6 +353,9 @@ public:
    * pre-warm fix first, and the getFinished() override differed. One
    * cancellation and progress contract is easier to keep correct than two.
    */
+  /* When true, a piece voxel may occupy only a result voxel of the same colour. */
+  bool strictColorRestrictions = false;
+
   unsigned int numThreads = 0;
 
   /* number of top level tasks the parallel search split itself into, and how

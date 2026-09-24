@@ -178,6 +178,7 @@ class solveThread_c : public assembler_cb, public thread_c {
     static const int PAR_JUST_COUNT =         0x20;  // just count the solutions, don't save them
     static const int PAR_COMPLETE_ROTATIONS = 0x40;  // do a thorough rotation check
     static const int PAR_CHECK_ROTATIONS =    0x80;  // try 90° piece rotations during disassembly
+    static const int PAR_STRICT_COLORS =     0x100;  // piece colour must equal result colour
 
     // create all the necessary data structures to start the thread later on
     solveThread_c(problem_c & puz, int par);

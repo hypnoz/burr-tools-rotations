@@ -542,12 +542,19 @@ void problem_c::disallowPlacement(unsigned int pc, unsigned int res) {
     colorConstraints.erase(i);
 }
 
-bool problem_c::placementAllowed(unsigned int pc, unsigned int res) const {
+bool problem_c::placementAllowed(unsigned int pc, unsigned int res, bool strict) const {
   bt_assert(pc <= puzzle.colorNumber());
   bt_assert(res <= puzzle.colorNumber());
 
   if (puzzle.colorNumber() == 0)
     return true;
+
+  /* Strict: the piece voxel colour must be the result voxel colour.
+   * Neutral only matches neutral, and a coloured voxel does not also
+   * match a neutral result voxel.
+   */
+  if (strict)
+    return pc == res;
 
   return (pc == 0) || (res == 0) || (colorConstraints.find((pc-1) << 16 | (res-1)) != colorConstraints.end());
 }

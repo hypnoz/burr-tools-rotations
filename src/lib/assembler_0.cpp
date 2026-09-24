@@ -402,8 +402,11 @@ bool assembler_0_c::canPlace(const voxel_c * piece, int x, int y, int z) const {
             ((piece->getState(px, py, pz) == voxel_c::VX_FILLED) &&
              (result->getState(x+px, y+py, z+pz) == voxel_c::VX_EMPTY)) ||
 
-            // the piece can also not be placed when the colour constraints don't fit
-            !problem.placementAllowed(piece->getColor(px, py, pz), result->getColor(x+px, y+py, z+pz))
+            // the piece can also not be placed when the colour constraints don't fit.
+            // An empty neutral cell carries no colour constraint.
+            ((piece->getState(px, py, pz) == voxel_c::VX_FILLED ||
+              piece->getColor(px, py, pz) != 0) &&
+             !problem.placementAllowed(piece->getColor(px, py, pz), result->getColor(x+px, y+py, z+pz), strictColorRestrictions))
 
            )
           return false;
@@ -620,7 +623,7 @@ int assembler_0_c::prepare(void) {
 
   std::vector<voxel_c*> cache(sym->getNumTransformationsMirror(), nullptr);
 
-  placementFinder_c finder(problem, result);
+  placementFinder_c finder(problem, result, strictColorRestrictions);
   std::vector<long> voxelOffsets;
   std::vector<int> positions;
 
@@ -699,11 +702,12 @@ int assembler_0_c::prepare(void) {
 
 
 
-assembler_0_c::errState assembler_0_c::createMatrix(bool keepMirror, bool keepRotations, bool comp) {
+assembler_0_c::errState assembler_0_c::createMatrix(bool keepMirror, bool keepRotations, bool comp, bool strictColors) {
 
   bt_assert(problem.resultValid());
 
   complete = comp;
+  strictColorRestrictions = strictColors;
 
   if (!canHandle(problem))
     return ERR_PUZZLE_UNHANDABLE;
@@ -1265,7 +1269,7 @@ void assembler_0_c::solution(void) {
 
     std::unique_ptr<assembly_c> assembly = getAssembly();
 
-    if (avoidTransformedAssemblies && assembly->smallerRotationExists(problem, avoidTransformedPivot, avoidTransformedMirror.get(), complete))
+    if (avoidTransformedAssemblies && assembly->smallerRotationExists(problem, avoidTransformedPivot, avoidTransformedMirror.get(), complete, strictColorRestrictions))
       return;
     else {
       if (!getCallback()->assembly(std::move(assembly)))
@@ -1531,7 +1535,7 @@ public:
       }
 
       if (parent.avoidTransformedAssemblies &&
-          assembly->smallerRotationExists(parent.problem, parent.avoidTransformedPivot, parent.avoidTransformedMirror.get(), parent.complete))
+          assembly->smallerRotationExists(parent.problem, parent.avoidTransformedPivot, parent.avoidTransformedMirror.get(), parent.complete, parent.strictColorRestrictions))
         return;
 
       uint64_t sig = 14695981039346656037ULL;
