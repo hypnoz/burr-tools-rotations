@@ -15,13 +15,14 @@
 #include "Layouter.h"
 #include "voxelframe.h"
 
-// a status line containing text; 3D colour mode is chosen from the View menu
+// Status text. Colour mode and render style are chosen from the View menu.
 class LStatusLine : public layouter_c {
 
 private:
 
   LFl_Box * text;
   int colorModeIndex;
+  int renderStyleIndex;
 
 public:
 
@@ -30,6 +31,10 @@ public:
   void setText(const char * t);
   voxelFrame_c::colorMode getColorMode(void) const;
   void setColorModeIndex(int i);
+  int getColorModeIndex(void) const { return colorModeIndex; }
+  voxelFrame_c::renderStyle getRenderStyle(void) const;
+  void setRenderStyleIndex(int i);
+  int getRenderStyleIndex(void) const { return renderStyleIndex; }
 
   virtual void getMinSize(int *width, int *height) const {
     *width = 30;

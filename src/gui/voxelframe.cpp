@@ -21,6 +21,7 @@
 #include "voxelframe.h"
 #include "arcball.h"
 #include "viewcube.h"
+#include "platform.h"
 
 #include "piececolor.h"
 #include "configuration.h"
@@ -37,6 +38,7 @@
 #include "../halfedge/polyhedron.h"
 
 #include <math.h>
+#include <vector>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -55,6 +57,8 @@ voxelFrame_c::voxelFrame_c(int x,int y,int w,int h) :
   Fl_Gl_Window(x,y,w,h),
   curAssembly(0),
   curProblem(0),
+  trans(ScaleRotateTranslate),
+  mX1(0), mY1(0), mZ(0), mX2(0), mY2(0),
   markerType(-1),
   size(10), cb(0),
   viewCube(new viewCube_c()),
@@ -62,11 +66,18 @@ voxelFrame_c::voxelFrame_c(int x,int y,int w,int h) :
   homeUser(0),
   drawViewCube(true),
   colors(pieceColor),
+  curStyle(styleVoxel),
+  _showCoordinateSystem(false),
+  centerX(0.0f), centerY(0.0f), centerZ(0.0f),
   _useLightning(true),
   debugRotations(false),
-  pickx(-1),
+  pickx(-1), picky(-1),
   insideVisible(false)
 {
+  int style = config.renderStyle();
+  if (style >= styleVoxel && style <= styleSTL)
+    curStyle = (renderStyle)style;
+
   Fl::use_high_res_GL(1);
   if (config.rotationMethod() == 0)
     rotater = new arcBall_c(w, h);
@@ -461,6 +472,236 @@ static void drawAxisLetter(const char *letter, int sx, int sy) {
   gl_draw(letter, sx - tw / 2, sy + th / 3);
 }
 
+/* draws the geometry of a single shape, the surrounding state and
+ * transformation must already be set up
+ */
+void voxelFrame_c::drawShape(shapeInfo * shape) {
+  if (shape->list) {
+
+    glCallList(shape->list);
+
+  } else {
+
+    if (config.useDisplayLists()) {
+
+      shape->list = glGenLists(1);
+
+      if (shape->list)
+        glNewList(shape->list, GL_COMPILE_AND_EXECUTE);
+
+    }
+
+    if (!shape->poly)
+    {
+      if (shape->mode == gridline)
+      {
+        shape->poly = shape->shape->getWireframeMesh();
+      }
+      else if (curStyle == styleEdges)
+      {
+        shape->poly = shape->shape->getFlatMesh();
+      }
+      else if (curStyle == styleSTL)
+      {
+        shape->poly = shape->shape->getSTLMesh();
+      }
+      else
+      {
+        shape->poly = shape->shape->getDrawingMesh();
+      }
+    }
+
+    if (shape->poly)
+    {
+      // the checker pattern is only for the voxel style, the other styles
+      // paint the whole piece in one colour
+      bool checker = shape->useChecker && (shape->mode == gridline || curStyle == styleVoxel);
+      bool edgeLines = (shape->mode == normal) && (curStyle == styleEdges);
+
+      if (edgeLines)
+      {
+        // push the faces back a bit so the edge lines don't z-fight with them
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(1.0, 1.0);
+      }
+
+      float lr = lightPieceColor(shape->r);
+      float lg = lightPieceColor(shape->g);
+      float lb = lightPieceColor(shape->b);
+      float dr = darkPieceColor(shape->r);
+      float dg = darkPieceColor(shape->g);
+      float db = darkPieceColor(shape->b);
+
+      if (shape->dim)
+      {
+        lr = 1 - (1 - lr) * 0.2;
+        lg = 1 - (1 - lg) * 0.2;
+        lb = 1 - (1 - lb) * 0.2;
+
+        dr = 1 - (1 - dr) * 0.2;
+        dg = 1 - (1 - dg) * 0.2;
+        db = 1 - (1 - db) * 0.2;
+      }
+
+      if (colors == anaglyphColorL || colors == anaglyphColor)
+      {
+        float tmp;
+        tmp = 0.1*lb + 0.3*lr + 0.6*lg;
+        tmp = 1-(1-tmp)/3;
+        lr = lg = lb = tmp;
+        tmp = 0.1*db + 0.3*dr + 0.6*dg;
+        tmp = 1-(1-tmp)/3;
+        dr = dg = db = tmp;
+      }
+
+      for(Polyhedron::const_face_iterator it=shape->poly->fBegin(); it!=shape->poly->fEnd(); ++it)
+      {
+        const Face* f = *it;
+
+        if (f->hole())
+          continue;
+
+        if ((f->_flags & FF_INSIDE_FACE) && !insideVisible)
+          continue;
+
+        if (shape->mode == gridline && !((f->_flags & FF_WIREFRAME)))
+          continue;
+
+        glPushName(f->_fb_index);
+        glPushName(f->_fb_face);
+
+        GLfloat alpha = 1;
+
+        if (f->_flags & FF_INSIDE_FACE)
+        {
+          glNormal3fv((-f->normal()).getData());
+          alpha = 1;
+          glEnable(GL_DEPTH_TEST);
+        }
+        else
+        {
+          glNormal3fv(f->normal().getData());
+          if (insideVisible)
+          {
+            alpha = 0.1;
+            glDisable(GL_DEPTH_TEST);
+          }
+          else
+          {
+            alpha = shape->a;
+            glEnable(GL_DEPTH_TEST);
+          }
+        }
+
+        glBegin(GL_TRIANGLES);
+
+        if (   colors == paletteColor
+            && f->_color > 0 && f->_color <= palette.size()
+            && !(f->_flags & FF_VARIABLE_FACE))
+            glColor4f(palette[f->_color-1].r, palette[f->_color-1].g, palette[f->_color-1].b, alpha);
+        else if (f->_flags & FF_VARIABLE_FACE)
+          glColor4f(0, 0, 0, alpha);
+        else if (f->_flags & FF_COLOR_LIGHT && checker)
+          glColor4f(lr, lg, lb, alpha);
+        else
+          glColor4f(dr, dg, db, alpha);
+
+        Face::const_edge_circulator e = f->begin();
+        Face::const_edge_circulator sentinel = e;
+        ++e;
+        Vector3Df start = (*e)->dst()->position();
+        ++e;
+
+        do {
+          glVertex3fv(start.getData());
+          glVertex3fv((*e)->dst()->position().getData());
+          ++e;
+          glVertex3fv((*e)->dst()->position().getData());
+        } while (e != sentinel);
+
+        if (f->_flags & FF_VARIABLE_MARK)
+        {
+          // draw the variable face
+          // TODO, properly draw quadrilaterals (and possibly even more corners, right now only triangles work
+          glColor3f(0, 0, 0);
+          Face::const_edge_circulator e2 = f->begin();
+          float x1 = (*e2)->dst()->position().x();
+          float y1 = (*e2)->dst()->position().y();
+          float z1 = (*e2)->dst()->position().z();
+          ++e2;
+          float x2 = (*e2)->dst()->position().x();
+          float y2 = (*e2)->dst()->position().y();
+          float z2 = (*e2)->dst()->position().z();
+          ++e2;
+          float x3 = (*e2)->dst()->position().x();
+          float y3 = (*e2)->dst()->position().y();
+          float z3 = (*e2)->dst()->position().z();
+          ++e2;
+
+          if (e2 == f->begin())
+            drawShrinkTriangle(x1, y1, z1, x2, y2, z2, x3, y3, z3);
+          else
+          {
+            float x4 = (*e2)->dst()->position().x();
+            float y4 = (*e2)->dst()->position().y();
+            float z4 = (*e2)->dst()->position().z();
+
+            drawShrinkQuadrilateral(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4);
+          }
+        }
+
+        glEnd();
+
+        glPopName();
+        glPopName();
+      }
+
+      if (edgeLines)
+      {
+        glDisable(GL_POLYGON_OFFSET_FILL);
+
+        // black lines at the edges of the shape, so where 2 faces with
+        // different normals meet, coplanar voxel-voxel boundaries get no line.
+        // black (and the grey used for dimmed pieces) is not changed by the
+        // lighting, so we can leave it enabled
+        float e = shape->dim ? 0.8 : 0;
+        glColor4f(e, e, e, shape->a);
+        glLineWidth(2);
+        glBegin(GL_LINES);
+
+        for (int i = 0; i < shape->poly->numHalfEdges(); i++)
+        {
+          const HalfEdge * he = shape->poly->halfedge(i);
+          const HalfEdge * tw = he->twin();
+
+          // draw each edge only once
+          if (!tw || tw->index() < i)
+            continue;
+
+          const Face * f1 = he->face();
+          const Face * f2 = tw->face();
+
+          if (!f1 || !f2 || f1->hole() || f2->hole())
+            continue;
+
+          if (f1->normal() * f2->normal() > 0.99)
+            continue;
+
+          glVertex3fv(tw->dst()->position().getData());
+          glVertex3fv(he->dst()->position().getData());
+        }
+
+        glEnd();
+        glLineWidth(3);
+      }
+    }
+
+    if (shape->list)
+      glEndList();
+
+  }
+}
+
 void voxelFrame_c::drawVoxelSpace() {
 
   glShadeModel(GL_FLAT);
@@ -468,6 +709,13 @@ void voxelFrame_c::drawVoxelSpace() {
   glPushName(0);
 
   for (unsigned int run = 0; run < 2; run++) {
+
+    // for the transparent shapes only draw the surface facing the viewer,
+    // otherwise the backsides and insides of the pieces blend through
+    // in irregular patches
+    if (run == 1)
+      glEnable(GL_CULL_FACE);
+
     for (unsigned int piece = 0; piece < shapes.size(); piece++) {
 
       shapeInfo * shape = &shapes[piece];
@@ -571,7 +819,7 @@ void voxelFrame_c::drawVoxelSpace() {
 
           glDisable(GL_DEPTH_TEST);
           glDisable(GL_TEXTURE_2D);
-          gl_font(FL_HELVETICA_BOLD, 16);
+          gl_font(FL_HELVETICA_BOLD, 18);
 
           glMatrixMode(GL_PROJECTION);
           glPushMatrix();
@@ -624,171 +872,32 @@ void voxelFrame_c::drawVoxelSpace() {
         glEnable(GL_BLEND);
       }
 
-      if (shape->list) {
+      if (run == 1)
+      {
+        // draw the transparent shape twice: first only its depth, then its
+        // colours. That way only the surface nearest to the viewer is
+        // blended and the shape does not also blend with its own back
+        // sides and get darker wherever several of its faces are stacked
+        // behind one another
+        GLboolean colMask[4];
+        glGetBooleanv(GL_COLOR_WRITEMASK, colMask);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glDepthMask(GL_TRUE);
 
-        glCallList(shape->list);
+        drawShape(shape);
 
-      } else {
+        glColorMask(colMask[0], colMask[1], colMask[2], colMask[3]);
+        glDepthMask(GL_FALSE);
 
-        if (config.useDisplayLists()) {
-
-          shape->list = glGenLists(1);
-
-          if (shape->list)
-            glNewList(shape->list, GL_COMPILE_AND_EXECUTE);
-
-        }
-
-        if (!shape->poly)
-        {
-          if (shape->mode == gridline)
-          {
-            shape->poly = shape->shape->getWireframeMesh();
-          }
-          else
-          {
-            shape->poly = shape->shape->getDrawingMesh();
-          }
-        }
-
-        if (shape->poly)
-        {
-          float lr = lightPieceColor(shape->r);
-          float lg = lightPieceColor(shape->g);
-          float lb = lightPieceColor(shape->b);
-          float dr = darkPieceColor(shape->r);
-          float dg = darkPieceColor(shape->g);
-          float db = darkPieceColor(shape->b);
-
-          if (shape->dim)
-          {
-            lr = 1 - (1 - lr) * 0.2;
-            lg = 1 - (1 - lg) * 0.2;
-            lb = 1 - (1 - lb) * 0.2;
-
-            dr = 1 - (1 - dr) * 0.2;
-            dg = 1 - (1 - dg) * 0.2;
-            db = 1 - (1 - db) * 0.2;
-          }
-
-          if (colors == anaglyphColorL || colors == anaglyphColor)
-          {
-            float tmp;
-            tmp = 0.1*lb + 0.3*lr + 0.6*lg;
-            tmp = 1-(1-tmp)/3;
-            lr = lg = lb = tmp;
-            tmp = 0.1*db + 0.3*dr + 0.6*dg;
-            tmp = 1-(1-tmp)/3;
-            dr = dg = db = tmp;
-          }
-
-          for(Polyhedron::const_face_iterator it=shape->poly->fBegin(); it!=shape->poly->fEnd(); it++)
-          {
-            const Face* f = *it;
-
-            if (f->hole())
-              continue;
-
-            if ((f->_flags & FF_INSIDE_FACE) && !insideVisible)
-              continue;
-
-            if (shape->mode == gridline && !((f->_flags & FF_WIREFRAME)))
-              continue;
-
-            glPushName(f->_fb_index);
-            glPushName(f->_fb_face);
-
-            GLfloat alpha = 1;
-
-            if (f->_flags & FF_INSIDE_FACE)
-            {
-              glNormal3fv((-f->normal()).getData());
-              alpha = 1;
-              glEnable(GL_DEPTH_TEST);
-            }
-            else
-            {
-              glNormal3fv(f->normal().getData());
-              if (insideVisible)
-              {
-                alpha = 0.1;
-                glDisable(GL_DEPTH_TEST);
-              }
-              else
-              {
-                alpha = shape->a;
-                glEnable(GL_DEPTH_TEST);
-              }
-            }
-
-            glBegin(GL_TRIANGLES);
-
-            if (   colors == paletteColor
-                && f->_color > 0 && f->_color <= palette.size()
-                && !(f->_flags & FF_VARIABLE_FACE))
-                glColor4f(palette[f->_color-1].r, palette[f->_color-1].g, palette[f->_color-1].b, alpha);
-            else if (f->_flags & FF_VARIABLE_FACE)
-              glColor4f(0, 0, 0, alpha);
-            else if (f->_flags & FF_COLOR_LIGHT && shape->useChecker)
-              glColor4f(lr, lg, lb, alpha);
-            else
-              glColor4f(dr, dg, db, alpha);
-
-            Face::const_edge_circulator e = f->begin();
-            Face::const_edge_circulator sentinel = e;
-            e++;
-            Vector3Df start = (*e)->dst()->position();
-            e++;
-
-            do {
-              glVertex3fv(start.getData());
-              glVertex3fv((*e)->dst()->position().getData());
-              e++;
-              glVertex3fv((*e)->dst()->position().getData());
-            } while (e != sentinel);
-
-            if (f->_flags & FF_VARIABLE_MARK)
-            {
-              // draw the variable face
-              // TODO, properly draw quadrilaterals (and possibly even more corners, right now only triangles work
-              glColor3f(0, 0, 0);
-              Face::const_edge_circulator e2 = f->begin();
-              float x1 = (*e2)->dst()->position().x();
-              float y1 = (*e2)->dst()->position().y();
-              float z1 = (*e2)->dst()->position().z();
-              e2++;
-              float x2 = (*e2)->dst()->position().x();
-              float y2 = (*e2)->dst()->position().y();
-              float z2 = (*e2)->dst()->position().z();
-              e2++;
-              float x3 = (*e2)->dst()->position().x();
-              float y3 = (*e2)->dst()->position().y();
-              float z3 = (*e2)->dst()->position().z();
-              e2++;
-
-              if (e2 == f->begin())
-                drawShrinkTriangle(x1, y1, z1, x2, y2, z2, x3, y3, z3);
-              else
-              {
-                float x4 = (*e2)->dst()->position().x();
-                float y4 = (*e2)->dst()->position().y();
-                float z4 = (*e2)->dst()->position().z();
-
-                drawShrinkQuadrilateral(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4);
-              }
-            }
-
-            glEnd();
-
-            glPopName();
-            glPopName();
-          }
-        }
-
-        if (shape->list)
-          glEndList();
-
+        // the colour fragments have exactly the depth the prepass laid
+        // down, so they must pass on equality
+        glDepthFunc(GL_LEQUAL);
       }
+
+      drawShape(shape);
+
+      if (run == 1)
+        glDepthFunc(GL_LESS);
 
       // the marker should be only active, when only one shape is there
       // otherwise it's drawn for every shape
@@ -829,7 +938,7 @@ void voxelFrame_c::drawVoxelSpace() {
                     else if (face.size() == 4*3)
                       drawGridRect(face[0], face[1], face[2], face[3]-face[0], face[4]-face[1], face[5]-face[2], face[9]-face[0], face[10]-face[1], face[11]-face[2], 4);
                     else
-                      printf("oops not implemented face shape for 3D cursor %zi\n", face.size());
+                      printf("oops not implemented face shape for 3D cursor %zu\n", face.size());
                   }
 
                   n++;
@@ -847,6 +956,7 @@ void voxelFrame_c::drawVoxelSpace() {
   }
 
   glPopName();
+  glDisable(GL_CULL_FACE);
   glDepthMask(GL_TRUE);
 
   drawDebugRotationCells();
@@ -869,6 +979,7 @@ unsigned int voxelFrame_c::addSpace(const voxel_c * vx) {
 
   i.list = 0;
   i.poly = 0;
+  i.pickPoly = 0;
   i.animAngle = 0;
   i.animAxisX = i.animAxisY = i.animAxisZ = 0;
   i.animPivotX = i.animPivotY = i.animPivotZ = 0;
@@ -886,6 +997,8 @@ void voxelFrame_c::clearSpaces(void) {
     if (shapes[i].poly)
       delete shapes[i].poly;
     shapes[i].poly = 0;
+    delete shapes[i].pickPoly;
+    shapes[i].pickPoly = 0;
   }
 
   shapes.clear();
@@ -942,6 +1055,36 @@ void voxelFrame_c::setDrawingMode(unsigned int nr, drawingMode mode) {
 
     if (shapes[nr].poly)
     {
+      delete shapes[nr].poly;
+      shapes[nr].poly = 0;
+      delete shapes[nr].pickPoly;
+      shapes[nr].pickPoly = 0;
+    }
+  }
+
+  redraw();
+}
+
+void voxelFrame_c::setRenderStyle(renderStyle style) {
+
+  if (curStyle == style)
+    return;
+
+  curStyle = style;
+
+  for (unsigned int nr = 0; nr < shapes.size(); nr++) {
+
+    // externally supplied meshes (showMesh) have no shape and don't depend on the style
+    if (!shapes[nr].shape)
+      continue;
+
+    if (shapes[nr].list) {
+      glDeleteLists(shapes[nr].list, 1);
+      shapes[nr].list = 0;
+    }
+
+    // gridline shapes always use the wireframe mesh, no need to recreate those
+    if (shapes[nr].poly && shapes[nr].mode != gridline) {
       delete shapes[nr].poly;
       shapes[nr].poly = 0;
     }
@@ -1062,6 +1205,7 @@ void voxelFrame_c::showMesh(Polyhedron * poly)
   i.dim = false;
 
   i.list = 0;
+  i.pickPoly = 0;
 
   shapes.push_back(i);
 
@@ -1386,6 +1530,8 @@ void voxelFrame_c::showPlacement(const problem_c * puz, unsigned int piece, unsi
       {
         delete shapes[0].poly;
         shapes[0].poly = 0;
+        delete shapes[0].pickPoly;
+        shapes[0].pickPoly = 0;
       }
     }
     else
@@ -1735,9 +1881,9 @@ void voxelFrame_c::drawDebugRotationLegend() {
   /* Text must use gl_draw — fl_draw does not paint into Fl_Gl_Window. */
   glDisable(GL_TEXTURE_2D);
   glColor3f(1.0f, 1.0f, 1.0f);
-  gl_font(FL_HELVETICA_BOLD, 12);
-  gl_draw("Rotation debug", boxX + pad, boxY + pad + 12);
-  gl_font(FL_HELVETICA, 11);
+  gl_font(FL_HELVETICA_BOLD, 14);
+  gl_draw("Rotation debug", boxX + pad, boxY + pad + 14);
+  gl_font(FL_HELVETICA, 13);
   gl_draw("Cyan: arc sweep clearance", textX, row1Y + swatch - 1);
   gl_draw("Yellow: axis-cross slot (empty)", textX, row2Y + swatch - 1);
   gl_draw("Magenta: hard conflict", textX, row3Y + swatch - 1);
@@ -1785,6 +1931,9 @@ void voxelFrame_c::updatePositionsOverlap(piecePositions_c *shifting) {
   voxel_c * inter = const_cast<voxel_c*>(shapes.rbegin()->shape);
   inter->setAll(voxel_c::VX_EMPTY);
 
+  /* heap allocated rather than on the stack because shapes.size() has no
+   * upper bound
+   */
   std::vector<char> involved(shapes.size(), 0);
 
   /* intersect each with everybody */
@@ -1953,6 +2102,82 @@ void voxelFrame_c::resize(int X, int Y, int W, int H) {
     show();
 }
 
+
+/* Paint a flat wash over the whole viewport, in window coordinates and
+ * with the depth test off, so it covers the scene whatever was drawn.
+ * Every piece of state this touches is saved and restored: draw() leaves
+ * the matrices and the blend setup configured for the next frame.
+ */
+static void drawWash(float grey, float alpha) {
+
+  glMatrixMode(GL_PROJECTION);
+  glPushMatrix();
+  glLoadIdentity();
+  glOrtho(0, 1, 0, 1, -1, 1);
+
+  glMatrixMode(GL_MODELVIEW);
+  glPushMatrix();
+  glLoadIdentity();
+
+  glPushAttrib(GL_ENABLE_BIT | GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT);
+
+  glDisable(GL_LIGHTING);
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glColor4f(grey, grey, grey, alpha);
+
+  glBegin(GL_QUADS);
+  glVertex2f(0, 0);
+  glVertex2f(1, 0);
+  glVertex2f(1, 1);
+  glVertex2f(0, 1);
+  glEnd();
+
+  glPopAttrib();
+
+  glPopMatrix();                 // modelview
+  glMatrixMode(GL_PROJECTION);
+  glPopMatrix();
+  glMatrixMode(GL_MODELVIEW);
+}
+
+double voxelFrame_c::computeContentRadius(void) const {
+
+  // straight-line distance from the origin, not the along-view-axis depth: a
+  // conservative stand-in for how far each shape's geometry can extend toward
+  // or away from the camera.
+  double r = 1.0;
+
+  for (const shapeInfo & s : shapes) {
+
+    if (!s.shape)
+      continue;
+
+    double radius = 0.5*sqrt((double)s.shape->getDiagonal())*s.scale;
+    double dist = sqrt((double)s.x*s.x + (double)s.y*s.y + (double)s.z*s.z) + radius;
+
+    if (dist > r) r = dist;
+  }
+
+  return r;
+}
+
+void voxelFrame_c::getNearFar(double * nearPlane, double * farPlane) const {
+
+  double dist = size*2;                    // camera distance, see the -size*2 translate in draw()
+  double r = computeContentRadius()*1.15;
+
+  double n = dist - r;
+  if (n < 0.1) n = 0.1;
+
+  double f = dist + r + 1.0;
+  if (f < n + 1.0) f = n + 1.0;
+
+  *nearPlane = n;
+  *farPlane = f;
+}
+
 void voxelFrame_c::draw() {
 
   if (!valid()) {
@@ -2010,7 +2235,9 @@ void voxelFrame_c::draw() {
     }
 
     // this call has to be identical to the one in image_c::prepareOpenGlImagePart
-    gluPerspective(15, 1.0*w()/h(), size+1, 3*size+1);
+    double nearPlane, farPlane;
+    getNearFar(&nearPlane, &farPlane);
+    gluPerspective(15, 1.0*w()/h(), nearPlane, farPlane);
     glMatrixMode(GL_MODELVIEW);
 
   }
@@ -2072,6 +2299,10 @@ void voxelFrame_c::draw() {
 
   if (cb)
     cb->PostDraw();
+
+  float grey, alpha;
+  if (pickx < 0 && platform::modalDimWash(this, &grey, &alpha))
+    drawWash(grey, alpha);
 }
 
 int voxelFrame_c::handle(int event) {
@@ -2204,6 +2435,8 @@ void voxelFrame_c::exportToVector(const char * fname, VectorFiletype vt) {
 #endif
 
   FILE * of = fopen(fname, "wb");
+  if (!of)
+    return;
 
   int state = GL2PS_OVERFLOW;
   int bufsize = 0;

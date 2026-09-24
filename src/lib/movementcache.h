@@ -21,6 +21,9 @@
 #ifndef __MOVEMENTCACHE_H__
 #define __MOVEMENTCACHE_H__
 
+#include <unordered_map>
+#include <vector>
+
 class voxel_c;
 class problem_c;
 class gridType_c;
@@ -46,48 +49,37 @@ class movementCache_c {
   private:
 
   /**
-   * values are saved within a hash table, this is the entry for the table for the movement data
+   * Cache key: the two involved shapes, their orientations and the
+   * relative offset of the 2nd piece.
    */
-  typedef struct moEntry {
+  struct moKey {
+    unsigned int s1 = 0; ///< id of the first involved shape
+    unsigned int s2 = 0; ///< id of the second involved shape
+    int dx = 0;          ///< relative x position of the 2nd piece
+    int dy = 0;          ///< relative y position of the 2nd piece
+    int dz = 0;          ///< relative z position of the 2nd piece
+    unsigned short t1 = 0; ///< orientation of the first shape
+    unsigned short t2 = 0; ///< orientation of the second shape
 
-    int dx; ///< relative x position of the 2nd piece
-    int dy; ///< relative y position of the 2nd piece
-    int dz; ///< relative z position of the 2nd piece
+    bool operator==(const moKey & o) const = default;
+  };
 
-    unsigned int s1; ///< id of the first involved shape
-    unsigned int s2; ///< id of the second involved shape
+  struct moKeyHash {
+    size_t operator()(const moKey & k) const noexcept;
+  };
 
-    /* the transformations of the 2 involved pieces
-     * normally we would need only one transformation, that for piece 2
-     * but the calculations involved to transform the 2 pieces so that
-     * piece one has a fixed transformation are too expensive
-     */
-    unsigned short t1; ///< orientation of the first shape
-    unsigned short t2; ///< orientation of the second shape
-
-    /** the possible movement in positive directions */
-    unsigned int * move;
-
-    /** next in the linked list of the hash table */
-    struct moEntry * next;
-
-  } moEntry;
-
-  /** the hash table */
-  moEntry ** moHash;
-
-  unsigned int moTableSize; ///< size of the hash table
-  unsigned int moEntries;   ///< number of entries in the table
+  /** movement values by key; computed on demand via moCalcValues */
+  std::unordered_map<moKey, std::vector<unsigned int>, moKeyHash> moCache;
 
   /**
    * Saves the shapes in all orientations.
    * The voxel spaces are calculated on demand. The entry at the zero-th position are
    * pointers into the puzzle, so we must not free them
    */
-  const voxel_c *** shapes;
+  std::vector<std::vector<const voxel_c*>> shapes;
 
   /** the mapping of piece numbers to shape ids */
-  unsigned int * pieces;
+  std::vector<unsigned int> pieces;
 
   /** number of shapes */
   unsigned int num_shapes;
@@ -95,10 +87,8 @@ class movementCache_c {
   /** number of possible transformations for each shape */
   unsigned int num_transformations;
 
-  void moRehash(void); ///< this function resizes the hash table to roughly twice the size
-
   /** when the entry is not inside the table, this function calculates the values for the movement info */
-  virtual unsigned int* moCalcValues(const voxel_c * sh1, const voxel_c * sh2, int dx, int dy, int dz) = 0;
+  virtual std::vector<unsigned int> moCalcValues(const voxel_c * sh1, const voxel_c * sh2, int dx, int dy, int dz) = 0;
 
   /// the gridtype used. We need this to make copies and transformations of the shapes
   const gridType_c * gt;
@@ -136,11 +126,9 @@ public:
   /** transformed shape for shape id s and orientation t (lazily computed) */
   const voxel_c * getTransformedShape(unsigned int s, unsigned char t);
 
-private:
-
   // no copying and assigning
-  movementCache_c(const movementCache_c&);
-  void operator=(const movementCache_c&);
+  movementCache_c(const movementCache_c&) = delete;
+  movementCache_c& operator=(const movementCache_c&) = delete;
 };
 
 #endif

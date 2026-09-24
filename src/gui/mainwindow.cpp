@@ -77,6 +77,9 @@
 #include "../tools/xml.h"
 
 #include "filechooser.h"
+#include "platform.h"
+#include "mainmenu.h"
+#include "../lib/bt_assert.h"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -105,6 +108,25 @@
 #include <fstream>
 #include <cstring>
 #include <string>
+
+
+static int liveMenuIndex(const Fl_Menu_ * m, Fl_Callback * cb) {
+  const Fl_Menu_Item * items = m->menu();
+  if (!items) return -1;
+  for (int i = 0; i < m->size(); i++)
+    if (items[i].callback() == cb) return i;
+  return -1;
+}
+
+static void setLiveMenuActive(Fl_Menu_ * m, int index, bool active) {
+  bt_assert(index >= 0);
+  int flags = m->mode(index);
+  if (active)
+    flags &= ~FL_MENU_INACTIVE;
+  else
+    flags |= FL_MENU_INACTIVE;
+  m->mode(index, flags);
+}
 
 /* returns true, if file exists, this is not the
  optimal way to do this. It would be better to open
@@ -997,7 +1019,8 @@ void mainWindow_c::cb_BtnAssemblerStep(void) {
 
   updateInterface();
 
-  View3D->getView()->showAssemblerState(puzzle->getProblem(solutionProblem->getSelection()), assm->getAssembly());
+  std::unique_ptr<assembly_c> a = assm->getAssembly();
+  View3D->getView()->showAssemblerState(puzzle->getProblem(solutionProblem->getSelection()), a.get());
 }
 
 static void cb_AllowColor_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AllowColor(); }
@@ -1110,6 +1133,7 @@ void mainWindow_c::cb_BtnCont(bool prep_only) {
   int par = solveThread_c::PAR_REDUCE;
   if (KeepMirrors->value() != 0) par |= solveThread_c::PAR_KEEP_MIRROR;
   if (KeepRotations->value() != 0) par |= solveThread_c::PAR_KEEP_ROTATIONS;
+  if (StrictColors->value() != 0) par |= solveThread_c::PAR_STRICT_COLORS;
   if (DropDisassemblies->value() != 0) par |= solveThread_c::PAR_DROP_DISASSEMBLIES;
   if (SolveDisasm->value() != 0) par |= solveThread_c::PAR_DISASSM;
   if (CheckRotations->value() != 0) par |= solveThread_c::PAR_CHECK_ROTATIONS;
@@ -1207,6 +1231,30 @@ void mainWindow_c::updateSolverOptionCheckboxes(void) {
     } else {
       CheckRotations->activate();
     }
+  }
+
+  /* Symmetry filter options:
+   * Keep Rotated turns the filter off entirely, so Deep and Keep Mirror are moot.
+   * Deep only runs when the filter is active, so it conflicts with Keep Rotated.
+   */
+  const bool keepRotations = KeepRotations->value() != 0;
+  const bool deepSymmetry = CompleteRotations->value() != 0;
+
+  if (keepRotations) {
+    CompleteRotations->value(0);
+    CompleteRotations->deactivate();
+    KeepMirrors->value(0);
+    KeepMirrors->deactivate();
+    KeepRotations->activate();
+  } else if (deepSymmetry) {
+    KeepRotations->value(0);
+    KeepRotations->deactivate();
+    CompleteRotations->activate();
+    KeepMirrors->activate();
+  } else {
+    CompleteRotations->activate();
+    KeepMirrors->activate();
+    KeepRotations->activate();
   }
 }
 
@@ -1390,21 +1438,19 @@ void mainWindow_c::cb_AddDisasm(void) {
     return;
   }
 
-  disassembler_c * dis = createDisassembler(*pr, CheckRotations->value() != 0,
+  std::unique_ptr<disassembler_c> dis = createDisassembler(*pr, CheckRotations->value() != 0,
       solverTypeChoice ? solverTypeFromIndex(solverTypeChoice->value())
                        : SOLVER_CLASSIC);
 
-  separation_c * d = dis->disassemble(pr->getSavedSolution(sol)->getAssembly());
+  std::unique_ptr<separation_c> d = dis->disassemble(pr->getSavedSolution(sol)->getAssembly());
 
   changed = true;
 
   if (d)
-    pr->getSavedSolution(sol)->setDisassembly(d);
+    pr->getSavedSolution(sol)->setDisassembly(std::move(d));
 
   activateSolution(prob, (int)SolutionSel->value()-1);
   updateInterface();
-
-  delete dis;
 }
 
 static void cb_AddAllDisasm_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AddAllDisasm(true); }
@@ -1424,7 +1470,7 @@ void mainWindow_c::cb_AddAllDisasm(bool all) {
 
   changed = true;
 
-  disassembler_c * dis = createDisassembler(*pr, CheckRotations->value() != 0,
+  std::unique_ptr<disassembler_c> dis = createDisassembler(*pr, CheckRotations->value() != 0,
       solverTypeChoice ? solverTypeFromIndex(solverTypeChoice->value())
                        : SOLVER_CLASSIC);
 
@@ -1445,14 +1491,13 @@ void mainWindow_c::cb_AddAllDisasm(bool all) {
 
     if (all || !pr->getSavedSolution(sol)->getDisassembly()) {
 
-      separation_c * d = dis->disassemble(pr->getSavedSolution(sol)->getAssembly());
+      std::unique_ptr<separation_c> d = dis->disassemble(pr->getSavedSolution(sol)->getAssembly());
 
       if (d)
-        pr->getSavedSolution(sol)->setDisassembly(d);
+        pr->getSavedSolution(sol)->setDisassembly(std::move(d));
     }
   }
 
-  delete dis;
   delete w;
 
   activateSolution(prob, (int)SolutionSel->value()-1);
@@ -1467,6 +1512,8 @@ void mainWindow_c::cb_PcVis(void) {
 
 void mainWindow_c::cb_Status(void) {
   View3D->getView()->showColors(puzzle, StatusLine->getColorMode());
+  View3D->getView()->setRenderStyle(StatusLine->getRenderStyle());
+  config.renderStyle(StatusLine->getRenderStyle());
 }
 
 static void cb_3dClick_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_3dClick(); }
@@ -1557,14 +1604,37 @@ void mainWindow_c::cb_3dClick(void) {
   }
 }
 
-static void cb_New_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_New(); }
+
+bool mainWindow_c::confirmDiscard(const char * action) {
+
+  if (!changed)
+    return true;
+
+  char msg[256];
+  snprintf(msg, sizeof(msg),
+           "The puzzle has unsaved changes.\nSave before you %s?", action);
+
+  switch (fl_choice("%s", "Cancel", "Save", "Don't Save", msg)) {
+
+    case 1:
+      cb_Save();
+      return !changed;
+
+    case 2:
+      return true;
+
+    default:
+      return false;
+  }
+}
+
+void cb_New_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_New(); }
 void mainWindow_c::cb_New(void) {
 
   if (threadStopped()) {
 
-    if (changed)
-      if (fl_choice("Puzzle changed are you sure?", "Cancel", "New Puzzle", 0) == 0)
-        return;
+    if (!confirmDiscard("create a new puzzle"))
+      return;
 
     gridTypeSelectorWindow_c w;
     w.show();
@@ -1577,7 +1647,7 @@ void mainWindow_c::cb_New(void) {
     if (fname) {
       delete [] fname;
       fname = 0;
-      label("BurrTools - unknown");
+      copy_label(platform::windowTitle(0).c_str());
     }
 
     changed = false;
@@ -1588,14 +1658,13 @@ void mainWindow_c::cb_New(void) {
   }
 }
 
-static void cb_Load_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load(); }
+void cb_Load_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load(); }
 void mainWindow_c::cb_Load(void) {
 
   if (threadStopped()) {
 
-    if (changed)
-      if (fl_choice("Puzzle changed; are you sure?", "Cancel", "Open", 0) == 0)
-        return;
+    if (!confirmDiscard("open another puzzle"))
+      return;
 
     const char * f = bt_file_chooser_open("Open Puzzle", "Puzzle Files\t*.xmpuzzle", "");
 
@@ -1625,14 +1694,13 @@ static bool hasFileExtension(const char * path, const char * ext)
   return true;
 }
 
-static void cb_Load_Ps3d_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load_Ps3d(); }
+void cb_Load_Ps3d_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load_Ps3d(); }
 void mainWindow_c::cb_Load_Ps3d(void) {
 
   if (threadStopped()) {
 
-    if (changed)
-      if (fl_choice("Puzzle changed; are you sure?", "Cancel", "Load", 0) == 0)
-        return;
+    if (!confirmDiscard("import another puzzle"))
+      return;
 
     const char * f = bt_file_chooser_open("Import PuzzleSolver3D File",
                                           "PuzzleSolver3D Files\t*.puz",
@@ -1641,7 +1709,7 @@ void mainWindow_c::cb_Load_Ps3d(void) {
     if (f) {
 
       std::ifstream in(f);
-      puzzle_c * newPuzzle = loadPuzzlerSolver3D(&in);
+      puzzle_c * newPuzzle = loadPuzzlerSolver3D(&in).release();
 
       if (!newPuzzle) {
         fl_alert("Could not load puzzle, sorry!");
@@ -1652,9 +1720,7 @@ void mainWindow_c::cb_Load_Ps3d(void) {
       fname = new char[strlen(f)+1];
       strcpy(fname, f);
 
-      char nm[300];
-      snprintf(nm, 299, "BurrTools - %s", fname);
-      label(nm);
+      copy_label(platform::windowTitle(fname).c_str());
 
       ReplacePuzzle(newPuzzle);
 
@@ -1667,14 +1733,13 @@ void mainWindow_c::cb_Load_Ps3d(void) {
   }
 }
 
-static void cb_Load_Scad_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load_Scad(); }
+void cb_Load_Scad_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Load_Scad(); }
 void mainWindow_c::cb_Load_Scad(void) {
 
   if (threadStopped()) {
 
-    if (changed)
-      if (fl_choice("Puzzle changed; are you sure?", "Cancel", "Load", 0) == 0)
-        return;
+    if (!confirmDiscard("import another puzzle"))
+      return;
 
     const char * f = bt_file_chooser_open("Import Puzzlecad File",
                                           "OpenSCAD Files\t*.scad",
@@ -1694,9 +1759,7 @@ void mainWindow_c::cb_Load_Scad(void) {
       fname = new char[strlen(f)+1];
       strcpy(fname, f);
 
-      char nm[300];
-      snprintf(nm, 299, "BurrTools - %s", fname);
-      label(nm);
+      copy_label(platform::windowTitle(fname).c_str());
 
       ReplacePuzzle(newPuzzle);
 
@@ -1709,7 +1772,7 @@ void mainWindow_c::cb_Load_Scad(void) {
   }
 }
 
-static void cb_Save_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Save(); }
+void cb_Save_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Save(); }
 void mainWindow_c::cb_Save(void) {
 
   if (threadStopped()) {
@@ -1736,7 +1799,7 @@ void mainWindow_c::cb_Save(void) {
   }
 }
 
-static void cb_Convert_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Convert(); }
+void cb_Convert_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Convert(); }
 void mainWindow_c::cb_Convert(void) {
 
   convertWindow_c win(puzzle->getGridType()->getType());
@@ -1775,7 +1838,7 @@ class voxelTableVector_c : public voxelTable_c
     const voxel_c * findSpace(unsigned int index) const { return (*shapes)[index]; }
 };
 
-static void cb_AssembliesToShapes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AssembliesToShapes(); }
+void cb_AssembliesToShapes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AssembliesToShapes(); }
 void mainWindow_c::cb_AssembliesToShapes(void) {
 
   assmImportWindow_c win(puzzle);
@@ -1799,7 +1862,7 @@ void mainWindow_c::cb_AssembliesToShapes(void) {
 
     for (unsigned int s = 0; s < pr->getNumberOfSavedSolutions(); s++)
     {
-      voxel_c * shape = pr->getSavedSolution(s)->getAssembly()->createSpace(*pr);
+      voxel_c * shape = pr->getSavedSolution(s)->getAssembly()->createSpace(*pr).release();
 
       if ((filter & assmImportWindow_c::dropDisconnected) && !shape->connected(0, true, voxel_c::VX_EMPTY))
       {
@@ -1885,7 +1948,7 @@ void mainWindow_c::cb_AssembliesToShapes(void) {
   }
 }
 
-static void cb_SaveAs_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SaveAs(); }
+void cb_SaveAs_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SaveAs(); }
 void mainWindow_c::cb_SaveAs(void) {
 
   if (threadStopped()) {
@@ -1895,17 +1958,20 @@ void mainWindow_c::cb_SaveAs(void) {
 
       if (!fileExists(f) || fl_choice("File exists; overwrite?", "Cancel", "Overwrite", 0)) {
 
-        char f2[1000];
+        std::string f2;
 
-        // check, if the last characters are ".xmpuzzle"
-        if (strcmp(f + strlen(f) - strlen(".xmpuzzle"), ".xmpuzzle")) {
-          snprintf(f2, 1000, "%s.xmpuzzle", f);
+        size_t flen = strlen(f);
+        const char ext[] = ".xmpuzzle";
+        size_t extlen = sizeof(ext) - 1;
 
-        } else
+        // check if the filename ends with ".xmpuzzle"
+        if (flen < extlen || strcmp(f + flen - extlen, ext) != 0) {
+          f2 = std::string(f) + ext;
+        } else {
+          f2 = f;
+        }
 
-          snprintf(f2, 1000, "%s", f);
-
-        ogzstream ostr(f2);
+        ogzstream ostr(f2.c_str());
 
         if (ostr)
         {
@@ -1922,12 +1988,10 @@ void mainWindow_c::cb_SaveAs(void) {
         }
 
         if (fname) delete [] fname;
-        fname = new char[strlen(f2)+1];
-        strcpy(fname, f2);
+        fname = new char[f2.length()+1];
+        strcpy(fname, f2.c_str());
 
-        char nm[300];
-        snprintf(nm, 299, "BurrTools - %s", fname);
-        label(nm);
+        copy_label(platform::windowTitle(fname).c_str());
 
       } else {
 
@@ -1937,46 +2001,43 @@ void mainWindow_c::cb_SaveAs(void) {
   }
 }
 
-static void cb_Quit_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->hide(); }
+void cb_Quit_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->hide(); }
 void mainWindow_c::hide(void) {
-  if ((!changed) || fl_choice("Puzzle changed do you want to quit and lose the changes?", "Cancel", "Quit", 0))
+  if (confirmDiscard("quit"))
     Fl_Double_Window::hide();
 }
 
-static void cb_Config_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Config(); }
+void cb_Config_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Config(); }
 void mainWindow_c::cb_Config(void) {
   config.dialog();
   activateConfigOptions();
 }
 
-static void cb_ToggleNotes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ToggleNotes(); }
+void cb_ToggleNotes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ToggleNotes(); }
 void mainWindow_c::cb_ToggleNotes(void) {
 
-  if (notesPanel->visible()) {
+  if (notesPanel->visible())
     notesPanel->hide();
-    notesToggle->copy_label("Show Notes");
-  } else {
+  else
     notesPanel->show();
-    notesToggle->copy_label("Hide Notes");
-  }
-  notesToggle->redraw();
+
+  updateNotesMenuLabel();
   if (contentTile)
     contentTile->forceLayout();
   relayoutViewStack();
 }
 
-static void cb_ShowNotes_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ShowNotes(); }
-void mainWindow_c::cb_ShowNotes(void) {
+void mainWindow_c::updateNotesMenuLabel(void) {
 
-  if (notesPanel->visible())
+  if (!MainMenu)
     return;
 
-  notesPanel->show();
-  notesToggle->copy_label("Hide Notes");
-  notesToggle->redraw();
-  if (contentTile)
-    contentTile->forceLayout();
-  relayoutViewStack();
+  const int idx = liveMenuIndex(MainMenu, cb_ToggleNotes_stub);
+  if (idx < 0)
+    return;
+
+  MainMenu->replace(idx, notesPanel->visible() ? "Hide Notes" : "Show Notes");
+  MainMenu->update();
 }
 
 static void cb_NotesUpdate_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_NotesUpdate(); }
@@ -2040,7 +2101,7 @@ void mainWindow_c::relayoutViewStack(void) {
   redraw();
 }
 
-static void cb_ImageExportVector_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ImageExportVector(); }
+void cb_ImageExportVector_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ImageExportVector(); }
 void mainWindow_c::cb_ImageExportVector(void) {
 
   vectorExportWindow_c w;
@@ -2053,9 +2114,9 @@ void mainWindow_c::cb_ImageExportVector(void) {
     View3D->getView()->exportToVector(w.getFileName(), w.getVectorType());
 }
 
-static void cb_ImageExport_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ImageExport(); }
+void cb_ImageExport_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ImageExport(); }
 void mainWindow_c::cb_ImageExport(void) {
-  imageExport_c w(puzzle);
+  imageExport_c w(puzzle, fname);
   w.show();
 
   while (w.visible()) {
@@ -2067,9 +2128,9 @@ void mainWindow_c::cb_ImageExport(void) {
   }
 }
 
-static void cb_STLExport_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_STLExport(); }
+void cb_STLExport_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_STLExport(); }
 void mainWindow_c::cb_STLExport(void) {
-  stlExport_c w(puzzle);
+  stlExport_c w(puzzle, fname);
   w.show();
 
   while (w.visible()) {
@@ -2077,7 +2138,7 @@ void mainWindow_c::cb_STLExport(void) {
   }
 }
 
-static void cb_Export_Scad_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Export_Scad(); }
+void cb_Export_Scad_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Export_Scad(); }
 void mainWindow_c::cb_Export_Scad(void) {
 
   if (puzzle->getGridType()->getType() != gridType_c::GT_BRICKS) {
@@ -2120,7 +2181,7 @@ void mainWindow_c::cb_Export_Scad(void) {
   }
 }
 
-static void cb_StatusWindow_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_StatusWindow(); }
+void cb_StatusWindow_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_StatusWindow(); }
 void mainWindow_c::cb_StatusWindow(void) {
 
   if (!detailsPanel)
@@ -2164,7 +2225,7 @@ void mainWindow_c::cb_DetailsChanged(void) {
   updateInterface();
 }
 
-static void cb_Toggle3D_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Toggle3D(); }
+void cb_Toggle3D_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Toggle3D(); }
 void mainWindow_c::cb_Toggle3D(void) {
 
   if (TaskSelectionTab->value() == TabPieces) {
@@ -2176,25 +2237,69 @@ void mainWindow_c::cb_Toggle3D(void) {
   }
 }
 
-static void cb_ViewMode0_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(0); }
-static void cb_ViewMode1_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(1); }
-static void cb_ViewMode2_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(2); }
-static void cb_ViewMode3_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(3); }
+void cb_ViewMode0_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(0); }
+void cb_ViewMode1_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(1); }
+void cb_ViewMode2_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(2); }
+void cb_ViewMode3_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_ViewMode(3); }
+void cb_RenderStyle0_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_RenderStyle(0); }
+void cb_RenderStyle1_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_RenderStyle(1); }
+void cb_RenderStyle2_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_RenderStyle(2); }
 
 static int viewModeMenuIdx[4];
 
 void mainWindow_c::cb_ViewMode(int mode) {
+
+  static Fl_Callback * const cbs[4] = {
+    cb_ViewMode0_stub, cb_ViewMode1_stub, cb_ViewMode2_stub, cb_ViewMode3_stub
+  };
 
   for (int i = 0; i < 4; i++)
     menu_MainMenu[viewModeMenuIdx[i]].clear();
   if (mode >= 0 && mode < 4)
     menu_MainMenu[viewModeMenuIdx[mode]].set();
 
+  if (MainMenu) {
+    Fl_Menu_Item * items = const_cast<Fl_Menu_Item *>(MainMenu->menu());
+    for (int i = 0; i < 4; i++) {
+      int idx = liveMenuIndex(MainMenu, cbs[i]);
+      if (idx < 0) continue;
+      if (i == mode) items[idx].set();
+      else items[idx].clear();
+    }
+    MainMenu->update();
+  }
+
   StatusLine->setColorModeIndex(mode);
   cb_Status();
 }
 
-static void cb_About_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_About(); }
+void mainWindow_c::syncRenderStyleMenu(void) {
+
+  static Fl_Callback * const cbs[3] = {
+    cb_RenderStyle0_stub, cb_RenderStyle1_stub, cb_RenderStyle2_stub
+  };
+
+  if (!MainMenu || !StatusLine)
+    return;
+
+  const int mode = StatusLine->getRenderStyleIndex();
+  Fl_Menu_Item * items = const_cast<Fl_Menu_Item *>(MainMenu->menu());
+  for (int i = 0; i < 3; i++) {
+    int idx = liveMenuIndex(MainMenu, cbs[i]);
+    if (idx < 0) continue;
+    if (i == mode) items[idx].set();
+    else items[idx].clear();
+  }
+  MainMenu->update();
+}
+
+void mainWindow_c::cb_RenderStyle(int mode) {
+  StatusLine->setRenderStyleIndex(mode);
+  syncRenderStyleMenu();
+  cb_Status();
+}
+
+void cb_About_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_About(); }
 void mainWindow_c::cb_About(void) {
 
   fl_message("This is the GUI for BurrTools\n"
@@ -2270,7 +2375,7 @@ The documentation was written for an older version of BurrTools, but the concept
 )TUTORIAL";
 
 static void cb_TutorialClose_stub(Fl_Widget* /*o*/, void* v) { ((Fl_Double_Window*)v)->hide(); }
-static void cb_Tutorial_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Tutorial(); }
+void cb_Tutorial_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Tutorial(); }
 static void cb_SolverTypeHelp_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SolverTypeHelp(); }
 static void cb_SortByHelp_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SortByHelp(); }
 static void cb_SolverTypeHelpClose_stub(Fl_Widget* /*o*/, void* v) { ((Fl_Double_Window*)v)->hide(); }
@@ -2336,7 +2441,7 @@ void mainWindow_c::cb_Tutorial(void) {
 
   LFl_Help_View *txt = new LFl_Help_View(0, 0, 1, 1);
   txt->textfont(FL_HELVETICA);
-  txt->textsize(16);
+  txt->textsize(18);
   txt->box(FL_FLAT_BOX);
   txt->color(FL_BACKGROUND_COLOR);
   txt->textcolor(FL_FOREGROUND_COLOR);
@@ -2372,9 +2477,9 @@ static void addSolverHelpHeading(int row, const char *name) {
   public:
     Heading(const char *txt, int r) : LFl_Box(txt, 0, r, 1, 1) {
       labelfont(FL_HELVETICA_BOLD);
-      labelsize(18);
+      labelsize(20);
       align(FL_ALIGN_TOP | FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-      fl_font(FL_HELVETICA_BOLD, 18);
+      fl_font(FL_HELVETICA_BOLD, 20);
       setMinimumSize(0, fl_height() + fl_descent() + 8);
     }
     void draw() {
@@ -2400,7 +2505,7 @@ static void addSolverHelpBody(int row, const char *text) {
   public:
     Body(const char *txt, int r) : LFl_Box(txt, 0, r, 1, 1) {
       labelfont(FL_HELVETICA);
-      labelsize(16);
+      labelsize(18);
       align(FL_ALIGN_TOP | FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
     }
     void getMinSize(int *width, int *height) const {
@@ -2427,7 +2532,7 @@ void mainWindow_c::cb_SolverTypeHelp(void) {
 
   LFl_Box *title = new LFl_Box("Explanation of Solver Types", 0, 0, 1, 1);
   title->labelfont(FL_HELVETICA_BOLD);
-  title->labelsize(20);
+  title->labelsize(22);
   title->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
   title->setMinimumSize(0, 32);
 
@@ -2496,7 +2601,7 @@ void mainWindow_c::cb_SortByHelp(void) {
 
   LFl_Box *title = new LFl_Box("Explanation of Sort by", 0, 0, 1, 1);
   title->labelfont(FL_HELVETICA_BOLD);
-  title->labelsize(20);
+  title->labelsize(22);
   title->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
   title->setMinimumSize(0, 32);
 
@@ -2667,16 +2772,11 @@ void mainWindow_c::updateUndoRedoButtons(void) {
   else menu_MainMenu[findMenuEntry("Redo")].deactivate();
 
   if (MainMenu) {
-    const Fl_Menu_Item * mu = MainMenu->find_item("Undo");
-    const Fl_Menu_Item * mr = MainMenu->find_item("Redo");
-    if (mu) {
-      if (canU) const_cast<Fl_Menu_Item*>(mu)->activate();
-      else const_cast<Fl_Menu_Item*>(mu)->deactivate();
-    }
-    if (mr) {
-      if (canR) const_cast<Fl_Menu_Item*>(mr)->activate();
-      else const_cast<Fl_Menu_Item*>(mr)->deactivate();
-    }
+    const int ui = liveMenuIndex(MainMenu, cb_Undo_stub);
+    const int ri = liveMenuIndex(MainMenu, cb_Redo_stub);
+    if (ui >= 0) setLiveMenuActive(MainMenu, ui, canU);
+    if (ri >= 0) setLiveMenuActive(MainMenu, ri, canR);
+    MainMenu->update();
   }
 }
 
@@ -2706,14 +2806,14 @@ void mainWindow_c::applyHistoryRestore(unsigned int selected) {
   redraw();
 }
 
-static void cb_Undo_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Undo(); }
+void cb_Undo_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Undo(); }
 void mainWindow_c::cb_Undo(void) {
   if (!shapeHistory || !shapeHistory->canUndo() || assmThread)
     return;
   applyHistoryRestore(shapeHistory->undo(puzzle));
 }
 
-static void cb_Redo_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Redo(); }
+void cb_Redo_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Redo(); }
 void mainWindow_c::cb_Redo(void) {
   if (!shapeHistory || !shapeHistory->canRedo() || assmThread)
     return;
@@ -2735,13 +2835,20 @@ bool mainWindow_c::threadStopped(void) {
   return true;
 }
 
-bool mainWindow_c::tryToLoad(const char * f) {
+bool mainWindow_c::tryToLoad(const char * f, bool * reportedError) {
+
+  if (reportedError) *reportedError = false;
 
   // it may well be that the file doesn't exist, if it came from the command line
   if (!f) return false;
   if (!fileExists(f)) return false;
 
-  std::istream * str = openGzFile(f);
+  auto str = openGzFile(f);
+  // openGzFile() can still return nullptr here even though fileExists()
+  // just passed: TOCTOU (the file was removed/renamed between the two
+  // calls) or a gzopen() allocation failure. Match the fileExists() early
+  // return above rather than dereferencing a null stream.
+  if (!str) return false;
   xmlParser_c pars(*str);
 
   puzzle_c * newPuzzle;
@@ -2753,19 +2860,15 @@ bool mainWindow_c::tryToLoad(const char * f) {
   catch (xmlParserException_c &e)
   {
     fl_message("%s",(std::string("load error: ") + e.what()).c_str());
-    delete str;
+    if (reportedError) *reportedError = true;
     return false;
   }
-
-  delete str;
 
   if (fname) delete [] fname;
   fname = new char[strlen(f)+1];
   strcpy(fname, f);
 
-  char nm[300];
-  snprintf(nm, 299, "BurrTools - %s", fname);
-  label(nm);
+  copy_label(platform::windowTitle(fname).c_str());
 
   ReplacePuzzle(newPuzzle);
 
@@ -2793,6 +2896,35 @@ bool mainWindow_c::tryToLoad(const char * f) {
     fl_message("%s",puzzle->getComment().c_str());
 
   return true;
+}
+
+
+void mainWindow_c::openFromSystem(const char * filename) {
+
+  struct ReentrancyGuard {
+    bool & flag;
+    explicit ReentrancyGuard(bool & f) : flag(f) { flag = true; }
+    ~ReentrancyGuard() { flag = false; }
+  };
+
+  if (handlingSystemOpen)
+    return;
+
+  ReentrancyGuard guard(handlingSystemOpen);
+
+  if (!filename || !filename[0])
+    return;
+
+  if (!threadStopped())
+    return;
+
+  if (!confirmDiscard("open that puzzle"))
+    return;
+
+  bool reportedError = false;
+
+  if (!tryToLoad(filename, &reportedError) && !reportedError)
+    fl_message("Could not open %s", filename);
 }
 
 void mainWindow_c::ReplacePuzzle(puzzle_c * NewPuzzle) {
@@ -2858,39 +2990,42 @@ void mainWindow_c::ReplacePuzzle(puzzle_c * NewPuzzle) {
 }
 
 Fl_Menu_Item mainWindow_c::menu_MainMenu[] = {
-  { "&File",           0, 0, 0, FL_SUBMENU },
-    {"New",            0, cb_New_stub,         0, 0, 0, 0, 14, 56},
-    {"Open",    FL_F + 3, cb_Load_stub,        0, 0, 0, 0, 14, 56},
-    {"Save",    FL_F + 2, cb_Save_stub,        0, 0, 0, 0, 14, 56},
-    {"Save As",        0, cb_SaveAs_stub,      0, FL_MENU_DIVIDER, 0, 0, 14, 56},
-    {"Import",         0, 0,                   0, FL_SUBMENU, 0, 0, 14, 56},
-      {"PuzzleSolver3D",       0, cb_Load_Ps3d_stub,   0, 0, 0, 0, 14, 56},
-      {"Puzzlecad (OpenSCAD)", 0, cb_Load_Scad_stub,   0, 0, 0, 0, 14, 56},
-      { 0 },
-    {"Export",         0, 0,                   0, FL_SUBMENU, 0, 0, 14, 56},
-      {"Puzzlecad (OpenSCAD)", 0, cb_Export_Scad_stub, 0, 0, 0, 0, 14, 56},
-      {"Images",             0, cb_ImageExport_stub, 0, 0, 0, 0, 14, 56},
-      {"Vector Image",       0, cb_ImageExportVector_stub, 0, 0, 0, 0, 14, 56},
-      {"STL",             0, cb_STLExport_stub, 0, 0, 0, 0, 14, 56},
-      { 0 },
-    {"Quit",           0, cb_Quit_stub,        0, 0, 3, 0, 14, 56},
-    { 0 },
-  {"&Edit",            0, 0, 0, FL_SUBMENU, 0, 0, 14, 56},
-    {"Undo",    FL_COMMAND+'z', cb_Undo_stub,  0, FL_MENU_INACTIVE, 0, 0, 14, 56},
-    {"Redo",    FL_COMMAND+FL_SHIFT+'z', cb_Redo_stub, 0, FL_MENU_INACTIVE, 0, 0, 14, 56},
-    {"Notes",          0, cb_ShowNotes_stub,   0, 0, 0, 0, 14, 56},
-    {"Toggle 3D", FL_F + 4, cb_Toggle3D_stub,  0, 0, 0, 0, 14, 56},
-    {"Convert brick grid type to other", 0, cb_Convert_stub, 0, 0, 0, 0, 14, 56},
-    {"Convert assemblies to pieces", 0, cb_AssembliesToShapes_stub, 0, FL_MENU_DIVIDER, 0, 0, 14, 56},
-    {"Display normally with shape color", 0, cb_ViewMode0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 14, 56},
-    {"Display with colour constraint colors", 0, cb_ViewMode1_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-    {"Display in anaglyph mode", 0, cb_ViewMode2_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-    {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO, 0, 0, 14, 56},
-    { 0 },
-  {"Settings",         0, cb_Config_stub,      0, 0, 0, 0, 14, 56},
-  {"Tutorial",         0, cb_Tutorial_stub,    0, 0, 0, 0, 14, 56},
-  {"About",            0, cb_About_stub,       0, 0, 3, 0, 14, 56},
-  {0}
+  { "&File",           0, 0, 0, FL_SUBMENU, 0, 0, 0, 0 },
+    {"New",            0, cb_New_stub,         0, 0, 0, 0, 16, 56},
+    {"Open",    FL_F + 3, cb_Load_stub,        0, 0, 0, 0, 16, 56},
+    {"Save",    FL_F + 2, cb_Save_stub,        0, 0, 0, 0, 16, 56},
+    {"Save As",        0, cb_SaveAs_stub,      0, FL_MENU_DIVIDER, 0, 0, 16, 56},
+    {"Import",         0, 0,                   0, FL_SUBMENU, 0, 0, 16, 56},
+      {"PuzzleSolver3D",       0, cb_Load_Ps3d_stub,   0, 0, 0, 0, 16, 56},
+      {"Puzzlecad (OpenSCAD)", 0, cb_Load_Scad_stub,   0, 0, 0, 0, 16, 56},
+      { },
+    {"Export",         0, 0,                   0, FL_SUBMENU, 0, 0, 16, 56},
+      {"Puzzlecad (OpenSCAD)", 0, cb_Export_Scad_stub, 0, 0, 0, 0, 16, 56},
+      {"Images",             0, cb_ImageExport_stub, 0, 0, 0, 0, 16, 56},
+      {"Vector Image",       0, cb_ImageExportVector_stub, 0, 0, 0, 0, 16, 56},
+      {"STL",             0, cb_STLExport_stub, 0, 0, 0, 0, 16, 56},
+      { },
+    {"Quit",           0, cb_Quit_stub,        0, 0, 3, 0, 16, 56},
+    { },
+  {"&Edit",            0, 0, 0, FL_SUBMENU, 0, 0, 16, 56},
+    {"Undo",    FL_COMMAND+'z', cb_Undo_stub,  0, FL_MENU_INACTIVE, 0, 0, 16, 56},
+    {"Redo",    FL_COMMAND+FL_SHIFT+'z', cb_Redo_stub, 0, FL_MENU_INACTIVE, 0, 0, 16, 56},
+    {"Show Notes",     0, cb_ToggleNotes_stub, 0, 0, 0, 0, 16, 56},
+    {"Toggle 3D", FL_F + 4, cb_Toggle3D_stub,  0, 0, 0, 0, 16, 56},
+    {"Convert brick grid type to other", 0, cb_Convert_stub, 0, 0, 0, 0, 16, 56},
+    {"Convert assemblies to pieces", 0, cb_AssembliesToShapes_stub, 0, FL_MENU_DIVIDER, 0, 0, 16, 56},
+    {"Display normally with shape color", 0, cb_ViewMode0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 16, 56},
+    {"Display with colour constraint colors", 0, cb_ViewMode1_stub, 0, FL_MENU_RADIO, 0, 0, 16, 56},
+    {"Display in anaglyph mode", 0, cb_ViewMode2_stub, 0, FL_MENU_RADIO, 0, 0, 16, 56},
+    {"Display in anaglyph mode with glasses swapped", 0, cb_ViewMode3_stub, 0, FL_MENU_RADIO | FL_MENU_DIVIDER, 0, 0, 16, 56},
+    {"Draw each voxel separately", 0, cb_RenderStyle0_stub, 0, FL_MENU_RADIO | FL_MENU_VALUE, 0, 0, 16, 56},
+    {"Draw flat faces with edges", 0, cb_RenderStyle1_stub, 0, FL_MENU_RADIO, 0, 0, 16, 56},
+    {"Draw pieces like STL export", 0, cb_RenderStyle2_stub, 0, FL_MENU_RADIO, 0, 0, 16, 56},
+    { },
+  {"Settings",         0, cb_Config_stub,      0, 0, 0, 0, 16, 56},
+  {"Tutorial",         0, cb_Tutorial_stub,    0, 0, 0, 0, 16, 56},
+  {"About",            0, cb_About_stub,       0, 0, 3, 0, 16, 56},
+  { }
 };
 
 void mainWindow_c::show(int argn, char ** argv) {
@@ -2989,7 +3124,7 @@ void mainWindow_c::activateSolution(unsigned int prob, unsigned int num) {
 
       char levelText[50];
       int len = snprintf(levelText, 50, "%i (", pr->getSavedSolution(num)->getDisassembly()->sumSteps());
-      pr->getSavedSolution(num)->getDisassembly()->movesText(levelText + len, 50-len);
+      snprintf(levelText + len, 50-len, "%s", pr->getSavedSolution(num)->getDisassembly()->movesText().c_str());
       levelText[strlen(levelText)+1] = 0;
       levelText[strlen(levelText)] = ')';
 
@@ -3015,7 +3150,7 @@ void mainWindow_c::activateSolution(unsigned int prob, unsigned int num) {
 
       char levelText[50];
       int len = snprintf(levelText, 50, "%i (", pr->getSavedSolution(num)->getDisassemblyInfo()->sumSteps());
-      pr->getSavedSolution(num)->getDisassemblyInfo()->movesText(levelText + len, 50-len);
+      snprintf(levelText + len, 50-len, "%s", pr->getSavedSolution(num)->getDisassemblyInfo()->movesText().c_str());
       levelText[strlen(levelText)+1] = 0;
       levelText[strlen(levelText)] = ')';
 
@@ -3160,29 +3295,51 @@ int mainWindow_c::findMenuEntry(const char * txt) {
 
 void mainWindow_c::initViewMenuIcons(void) {
 
-  static pixmapList_c pm;
-  static Fl_Multi_Label ml[4];
   static const char * names[4] = {
     "Display normally with shape color",
     "Display with colour constraint colors",
     "Display in anaglyph mode",
     "Display in anaglyph mode with glasses swapped"
   };
+
+  for (int i = 0; i < 4; i++)
+    viewModeMenuIdx[i] = mainWindow_c::findMenuEntry(names[i]);
+
+#ifdef __APPLE__
+  /* Fl_Sys_Menu_Bar turns Fl_Multi_Label image+text items into blank native
+   * rows (the radio check still appears). Keep the text labels so View is
+   * readable on the system menu bar.
+   */
+  return;
+#else
+  static pixmapList_c pm;
+  static Fl_Multi_Label ml[4];
   static const char ** xpms[4] = {
     ViewModeNormal_xpm,
     ViewModeColor_xpm,
     ViewMode3D_xpm,
     ViewMode3DL_xpm
   };
+  static Fl_Callback * const cbs[4] = {
+    cb_ViewMode0_stub, cb_ViewMode1_stub, cb_ViewMode2_stub, cb_ViewMode3_stub
+  };
 
   for (int i = 0; i < 4; i++) {
-    viewModeMenuIdx[i] = mainWindow_c::findMenuEntry(names[i]);
     ml[i].typea = FL_IMAGE_LABEL;
     ml[i].labela = (const char *)pm.get(xpms[i]);
     ml[i].typeb = FL_NORMAL_LABEL;
     ml[i].labelb = names[i];
     menu_MainMenu[viewModeMenuIdx[i]].multi_label(&ml[i]);
+
+    if (MainMenu) {
+      int idx = liveMenuIndex(MainMenu, cbs[i]);
+      if (idx >= 0) {
+        Fl_Menu_Item * items = const_cast<Fl_Menu_Item *>(MainMenu->menu());
+        items[idx].multi_label(&ml[i]);
+      }
+    }
   }
+#endif
 }
 
 void mainWindow_c::selectEntitiesTab(bool resetZoom) {
@@ -3198,21 +3355,41 @@ void mainWindow_c::updateInterface(void) {
 
   // update the menu items activate state
 
-  // there must be at least one shape before there is something to export...
-  if (puzzle->getNumberOfShapes() > 0)
+  const bool exportActive = puzzle->getNumberOfShapes() > 0;
+  const bool stlActive    = (ggt->getGridType()->getCapabilities() & gridType_c::CAP_STLEXPORT)
+                            && puzzle->getNumberOfShapes() > 0;
+
+  if (exportActive != menuExportActive || stlActive != menuSTLActive) {
+    const int imageIndex = liveMenuIndex(MainMenu, cb_ImageExport_stub);
+    const int stlIndex   = liveMenuIndex(MainMenu, cb_STLExport_stub);
+    const int scadIndex  = liveMenuIndex(MainMenu, cb_Export_Scad_stub);
+    const int vecIndex   = liveMenuIndex(MainMenu, cb_ImageExportVector_stub);
+
+    bt_assert(imageIndex >= 0);
+    bt_assert(stlIndex >= 0);
+
+    if (imageIndex >= 0 && stlIndex >= 0) {
+      setLiveMenuActive(MainMenu, imageIndex, exportActive);
+      setLiveMenuActive(MainMenu, stlIndex, stlActive);
+      if (scadIndex >= 0) setLiveMenuActive(MainMenu, scadIndex, exportActive);
+      if (vecIndex >= 0) setLiveMenuActive(MainMenu, vecIndex, exportActive);
+      MainMenu->update();
+      menuExportActive = exportActive;
+      menuSTLActive    = stlActive;
+    }
+  }
+
+  // Keep the static table in sync for findMenuEntry-based callers
+  if (exportActive)
     menu_MainMenu[findMenuEntry("Images")].activate();
   else
     menu_MainMenu[findMenuEntry("Images")].deactivate();
-
-  if (ggt->getGridType()->getCapabilities() & gridType_c::CAP_STLEXPORT &&
-      puzzle->getNumberOfShapes() > 0)
+  if (stlActive)
     menu_MainMenu[findMenuEntry("STL")].activate();
   else
     menu_MainMenu[findMenuEntry("STL")].deactivate();
 
   updateUndoRedoButtons();
-
-  MainMenu->copy(menu_MainMenu, this);
 
   unsigned int prob = solutionProblem->getSelection();
 
@@ -3954,6 +4131,7 @@ void mainWindow_c::update(void) {
     if (!assmThread || &(assmThread->getProblem()) == puzzle->getProblem(solutionProblem->getSelection()))
       updateInterface();
   }
+  platform::setDocumentEdited(this, changed);
 }
 
 void mainWindow_c::Toggle3DView(void)
@@ -4058,6 +4236,18 @@ int mainWindow_c::handle(int event) {
       }
     }
     switch(Fl::event_key()) {
+      case FL_F + 2:
+        if (!platform::usesSystemMenuBar()) break;
+        cb_Save_stub(this, this);
+        return 1;
+      case FL_F + 3:
+        if (!platform::usesSystemMenuBar()) break;
+        cb_Load_stub(this, this);
+        return 1;
+      case FL_F + 4:
+        if (!platform::usesSystemMenuBar()) break;
+        cb_Toggle3D_stub(this, this);
+        return 1;
       case FL_F + 5:
         if (TaskSelectionTab->value() == TabPieces) {
           editChoice->select(0);
@@ -4089,7 +4279,37 @@ int mainWindow_c::handle(int event) {
 }
 
 #define SZ_GAP 5                               // gap between elements
-#define MAIN_TAB_LABELSIZE 16                  // slightly larger than FLTK default 14
+#define MAIN_TAB_LABELSIZE 18                  // slightly larger than the raised default
+
+/* Width of the four tab headers. Fl_Tabs only adds a few pixels of chrome
+ * around each label — not 2× the font size, which overshot by ~60px. */
+static int leftBarWidth(void) {
+  static const char *const labels[] = {
+    "  Entities  ", "  Puzzle  ", "  Solver  ", "  Debug  "
+  };
+  fl_font(FL_HELVETICA, MAIN_TAB_LABELSIZE);
+  int total = 0;
+  for (const char *lab : labels)
+    total += (int)fl_width(lab) + 8;
+  if (total < 360)
+    total = 360;
+  return total + 25;
+}
+
+/* Vertical scroll around a tab's left-bar tile. The content keeps its
+ * preferred height; when the window is shorter, a scrollbar appears
+ * instead of squashing the controls. */
+static LFl_Scroll * makeTabScroll(void) {
+  const int barW = leftBarWidth();
+  LFl_Scroll * s = new LFl_Scroll(0, 0, 1, 1);
+  s->type(Fl_Scroll::VERTICAL);
+  s->box(FL_FLAT_BOX);
+  s->color(FL_BACKGROUND_COLOR);
+  s->weight(1, 1);
+  s->setMinimumSize(barW, 140);
+  s->setShrinkMinSize(barW, 140);
+  return s;
+}
 
 void mainWindow_c::CreateShapeTab(void) {
 
@@ -4099,8 +4319,11 @@ void mainWindow_c::CreateShapeTab(void) {
   TabPieces->tooltip("Edit shapes");
   TabPieces->clear_visible_focus();
 
+  LFl_Scroll * scroll = makeTabScroll();
+
   LFl_Tile * tile = new LFl_Tile(0, 0, 1, 1);
   tile->pitch(SZ_GAP);
+  tile->weight(1, 1);
 
   {
     layouter_c * group = new layouter_c(0, 0);
@@ -4306,7 +4529,7 @@ void mainWindow_c::CreateShapeTab(void) {
 
   tile->end();
 
-  TabPieces->resizable(tile);
+  TabPieces->resizable(scroll);
   TabPieces->end();
 
   Fl_Group::current()->resizable(TabPieces);
@@ -4321,8 +4544,11 @@ void mainWindow_c::CreateProblemTab(void) {
   TabProblems->hide();
   TabProblems->clear_visible_focus();
 
+  LFl_Scroll * scroll = makeTabScroll();
+
   LFl_Tile * tile = new LFl_Tile(0, 0, 1, 1);
   tile->pitch(SZ_GAP);
+  tile->weight(1, 1);
 
   {
     layouter_c * group = new layouter_c(0, 0);
@@ -4501,7 +4727,7 @@ void mainWindow_c::CreateProblemTab(void) {
 
   tile->end();
 
-  TabProblems->resizable(tile);
+  TabProblems->resizable(scroll);
   TabProblems->end();
 }
 
@@ -4541,9 +4767,12 @@ void mainWindow_c::CreateSolveTab(void) {
   TabSolve->hide();
   TabSolve->clear_visible_focus();
 
+  LFl_Scroll * scroll = makeTabScroll();
+
   LFl_Tile * tile = new LFl_Tile(0, 0, 1, 1);
   tile->pitch(SZ_GAP);
-  solverPane = tile;
+  tile->weight(1, 1);
+  solverPane = scroll;
 
   {
     layouter_c * group = new layouter_c(0, 0);
@@ -4577,19 +4806,26 @@ void mainWindow_c::CreateSolveTab(void) {
     DropDisassemblies->clear_visible_focus();
     DropDisassemblies->callback(cb_SolverOptions_stub, this);
 
-    updateSolverOptionCheckboxes();
-
     CompleteRotations = new LFl_Check_Button("Deep Symmetry Check", 1, 0, 1, 1);
     CompleteRotations->tooltip(" Do expensive and thorough rotation check, eliminating translations and rotations not in symmetry of the result shape ");
     CompleteRotations->clear_visible_focus();
+    CompleteRotations->callback(cb_SolverOptions_stub, this);
 
     KeepMirrors = new LFl_Check_Button("Keep Mirror Solutions", 1, 1, 1, 1);
     KeepMirrors->tooltip(" Don't remove solutions that are mirrors of another solution ");
     KeepMirrors->clear_visible_focus();
+    KeepMirrors->callback(cb_SolverOptions_stub, this);
 
     KeepRotations = new LFl_Check_Button("Keep Rotated Solutions", 1, 2, 1, 1);
     KeepRotations->tooltip(" Don't remove solutions that are rotations of other solutions ");
     KeepRotations->clear_visible_focus();
+    KeepRotations->callback(cb_SolverOptions_stub, this);
+
+    StrictColors = new LFl_Check_Button("Strict Color Restrictions", 1, 3, 1, 1);
+    StrictColors->tooltip(" A voxel with a colour fits only a result voxel of that same colour, not a neutral one. A voxel with no colour fits only a result voxel that also has no colour. ");
+    StrictColors->clear_visible_focus();
+
+    updateSolverOptionCheckboxes();
 
     o->end();
 
@@ -4598,8 +4834,10 @@ void mainWindow_c::CreateSolveTab(void) {
     LFl_Box * solverTypeCaption = new LFl_Box("Solver Type: ", 0, 0, 1, 1);
     solverTypeCaption->tooltip(solverTypeTooltip());
 
-    solverTypeChoice = new LFl_Choice(1, 0, 1, 1);
-    ((LFl_Choice*)solverTypeChoice)->weight(1, 0);
+    LFl_Choice * solverType = new LFl_Choice(1, 0, 1, 1);
+    solverTypeChoice = solverType;
+    solverType->weight(1, 0);
+    solverType->setMinimumSize(0, 25);
     solverTypeChoice->tooltip(solverTypeTooltip());
     for (unsigned int i = 0; i < solverTypeCount(); i++)
       solverTypeChoice->add(solverTypeLabel((solverType_e)i));
@@ -4610,12 +4848,15 @@ void mainWindow_c::CreateSolveTab(void) {
     solverTypeHelp->callback(cb_SolverTypeHelp_stub, this);
     solverTypeHelp->stretchVCenter();
     solverTypeHelp->setPadding(10, 4);
+    solverTypeHelp->setMinimumSize(0, 25);
 
     LFl_Box * sortByLabel = new LFl_Box("Sort by: ", 0, 1, 1, 1);
     sortByLabel->tooltip(" Set before solving to order saved solutions. Click ? for an explanation of each option. ");
 
-    sortMethod = new LFl_Choice(1, 1, 1, 1);
-    ((LFl_Choice*)sortMethod)->weight(1, 0);
+    LFl_Choice * sortBy = new LFl_Choice(1, 1, 1, 1);
+    sortMethod = sortBy;
+    sortBy->weight(1, 0);
+    sortBy->setMinimumSize(0, 25);
     sortMethod->tooltip(" Set before solving to order saved solutions. Click ? for an explanation of each option. ");
 
     // be careful the order in here must correspond with the enumeration in assembler thread
@@ -4632,6 +4873,7 @@ void mainWindow_c::CreateSolveTab(void) {
     sortByHelp->callback(cb_SortByHelp_stub, this);
     sortByHelp->stretchVCenter();
     sortByHelp->setPadding(10, 4);
+    sortByHelp->setMinimumSize(0, 25);
 
     o->end();
 
@@ -4988,7 +5230,7 @@ void mainWindow_c::CreateSolveTab(void) {
   }
   tile->end();
 
-  TabSolve->resizable(tile);
+  TabSolve->resizable(scroll);
   TabSolve->end();
 }
 
@@ -5121,10 +5363,13 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   shapeHistory->reset(puzzle);
   ggt = new guiGridType_c(puzzle->getGridType());
   changed = false;
+  handlingSystemOpen = false;
+  menuExportActive = true;
+  menuSTLActive = true;
   BtnUndo = 0;
   BtnRedo = 0;
 
-  label("BurrTools - unknown");
+  copy_label(platform::windowTitle(0).c_str());
   user_data((void*)(this));
 
   /* original comment dialog is 400x200; its text box is the window
@@ -5143,47 +5388,53 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   const int notesMinH = NOTES_TEXT_MIN_H + 5 + notesBtnH + 8;
   const int notesButtonsFloorH = notesBtnH + 8;
 
-  layouter_c * menuRow = new layouter_c(0, 0, 1, 1);
+#ifdef __APPLE__
+  /* The system menu bar is not a layout child, so do not reserve a row
+   * for it. Content starts at the top of the window.
+   */
+  LFl_Sys_Menu_Bar * menuBar = new LFl_Sys_Menu_Bar(0, 0, 1, 1);
+  MainMenu = menuBar;
+  menuBar->copy(mainmenu::table(), this);
+  initViewMenuIcons();
+  menuBar->update();
+  mainmenu::installApplicationMenu(this);
 
+  StatusLine = new LStatusLine(0, 1, 1, 1);
+  StatusLine->weight(1, 0);
+  syncRenderStyleMenu();
+
+  layouter_c * contentRow = new LFl_Tile(0, 0, 1, 1);
+#else
   LFl_Menu_Bar * menuBar = new LFl_Menu_Bar(0, 0, 1, 1);
   MainMenu = menuBar;
+  menuBar->copy(mainmenu::table(), this);
   initViewMenuIcons();
-  menuBar->copy(menu_MainMenu, this);
+  menuBar->update();
+  mainmenu::installApplicationMenu(this);
   menuBar->weight(1, 0);
-
-  notesToggle = new LFlatButton_c(1, 0, 1, 1, "Show Notes",
-                                  " Show or hide the puzzle notes panel ",
-                                  cb_ToggleNotes_stub, this);
-  notesToggle->box(FL_FLAT_BOX);
-  notesToggle->down_box(FL_FLAT_BOX);
-  notesToggle->labelsize(14);
-  {
-    int tw = 0, th = 0;
-    fl_font(notesToggle->labelfont(), notesToggle->labelsize());
-    fl_measure("Hide Notes", tw, th);
-    notesToggle->setMinimumSize(tw + 16, 25);
-  }
-
-  menuRow->end();
 
   StatusLine = new LStatusLine(0, 2, 1, 1);
   StatusLine->weight(1, 0);
+  syncRenderStyleMenu();
 
   layouter_c * contentRow = new LFl_Tile(0, 1, 1, 1);
+#endif
   contentTile = (LFl_Tile*)contentRow;
   contentRow->weight(1, 1);
   /* Let this row shrink below the tabs/3D preferred height so the notes
-   * button row can stay in the visible window instead of overflowing. */
+   * panel Update/Revert row can stay in the visible window. */
   contentRow->setShrinkMinSize(0, notesButtonsFloorH);
 
-  LFl_Tile * mainTile = new LFl_Tile(0, 0, 1, 1);
+  /* Regular layouter, not a tile: the left bar stays at the tab-header
+   * width and cannot be dragged horizontally. Extra width goes to the 3D view. */
+  layouter_c * mainTile = new layouter_c(0, 0, 1, 1);
   mainTile->weight(1, 1);
 
   static const int VIEW3D_MIN = 400;
   static const int VIEW3D_SHRINK_MIN = VIEW3D_MIN * 3 / 10;
 
   rightPane = new LFl_Tile(1, 0, 1, 1);
-  rightPane->weight(1, 0);
+  rightPane->weight(1, 1);
   rightPane->setMinimumSize(VIEW3D_MIN, VIEW3D_MIN);
   rightPane->setShrinkMinSize(VIEW3D_SHRINK_MIN, 0);
   rightPane->shrinkPrio(0, 128);
@@ -5219,10 +5470,15 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   (new LFl_Box(0, 0, 1, 1))->color(FL_BACKGROUND_COLOR);
 
   // the tab for the tool bar
-  TaskSelectionTab = new LFl_Tabs(0, 0, 1, 1);
-  TaskSelectionTab->callback(cb_TaskSelectionTab_stub, this);
-  TaskSelectionTab->labelsize(MAIN_TAB_LABELSIZE);
-  TaskSelectionTab->clear_visible_focus();
+  const int barW = leftBarWidth();
+  LFl_Tabs * tabs = new LFl_Tabs(0, 0, 1, 1);
+  TaskSelectionTab = tabs;
+  tabs->callback(cb_TaskSelectionTab_stub, this);
+  tabs->labelsize(MAIN_TAB_LABELSIZE);
+  tabs->clear_visible_focus();
+  tabs->weight(0, 1);
+  tabs->setMinimumSize(barW, 140);
+  tabs->setShrinkMinSize(barW, 140);
 
   // the three tabs
   CreateShapeTab();
@@ -5299,7 +5555,17 @@ mainWindow_c::mainWindow_c(gridType_c * gt) : LFl_Double_Window(true) {
   ViewSizes[1] = -1;
   ViewSizes[2] = -1;
 
-  resize(config.windowPosX(), config.windowPosY(), config.windowPosW(), config.windowPosH());
+  /* Saved size is restored, but a previous session may have left a tiny
+   * window. Floor at the default so the app does not open cramped. */
+  static const int DEFAULT_WINDOW_W = 1200;
+  static const int DEFAULT_WINDOW_H = 800;
+  int ww = config.windowPosW();
+  int wh = config.windowPosH();
+  if (ww < DEFAULT_WINDOW_W)
+    ww = DEFAULT_WINDOW_W;
+  if (wh < DEFAULT_WINDOW_H)
+    wh = DEFAULT_WINDOW_H;
+  resize(config.windowPosX(), config.windowPosY(), ww, wh);
 
   if (!config.useRubberband())
     editMode->select(1);

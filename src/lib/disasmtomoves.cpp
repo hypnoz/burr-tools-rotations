@@ -23,20 +23,31 @@
 #include "disassembly.h"
 #include "disassemblernode.h"
 
-disasmToMoves_c::disasmToMoves_c(const separation_c * tr, unsigned int sz, unsigned int max) : size(sz), maxPieceName(max) {
+#include <algorithm>
 
-  tree = new separation_c(tr);
+disasmToMoves_c::disasmToMoves_c(const separation_c * tr, unsigned int sz, unsigned int max)
+  : tree(tr ? std::make_unique<separation_c>(tr) : nullptr),
+    size(sz),
+    moves(max * 4, 0.0f),
+    orients(max, 0),
+    rotAngle(max, 0.0f),
+    rotAxisX(max, 0.0f), rotAxisY(max, 0.0f), rotAxisZ(max, 0.0f),
+    rotPivotX(max, 0.0f), rotPivotY(max, 0.0f), rotPivotZ(max, 0.0f),
+    mv(max, false),
+    maxPieceName(max) {
+}
 
-  moves = new float[maxPieceName*4];
-  orients = new unsigned int[maxPieceName];
-  rotAngle = new float[maxPieceName];
-  rotAxisX = new float[maxPieceName];
-  rotAxisY = new float[maxPieceName];
-  rotAxisZ = new float[maxPieceName];
-  rotPivotX = new float[maxPieceName];
-  rotPivotY = new float[maxPieceName];
-  rotPivotZ = new float[maxPieceName];
-  mv = new bool[maxPieceName];
+disasmToMoves_c::~disasmToMoves_c() = default;
+
+void disasmToMoves_c::setStep(float step, bool fadeOut, bool center_active) {
+
+  int s = int(step);
+  float frac = step - s;
+
+  // a temporary array, used to save the 2nd placement for the interpolation
+  std::vector<float> moves2(maxPieceName * 4, 0.0f);
+  std::vector<unsigned int> orients2(maxPieceName, 0);
+  std::fill(moves.begin(), moves.end(), 0.0f);
 
   for (unsigned int i = 0; i < maxPieceName; i++) {
     orients[i] = 0;
@@ -44,45 +55,11 @@ disasmToMoves_c::disasmToMoves_c(const separation_c * tr, unsigned int sz, unsig
     rotAxisX[i] = rotAxisY[i] = rotAxisZ[i] = 0;
     rotPivotX[i] = rotPivotY[i] = rotPivotZ[i] = 0;
   }
-}
-
-disasmToMoves_c::~disasmToMoves_c() {
-  delete [] moves;
-  delete [] orients;
-  delete [] rotAngle;
-  delete [] rotAxisX;
-  delete [] rotAxisY;
-  delete [] rotAxisZ;
-  delete [] rotPivotX;
-  delete [] rotPivotY;
-  delete [] rotPivotZ;
-  delete [] mv;
-  delete tree;
-}
-
-void disasmToMoves_c::setStep(float step, bool fadeOut, bool center_active) {
-
-  int s = int(step);
-  float frac = step - s;
-
-  // a temporary array, used to save the 2nd placement for the interpolation */
-  float * moves2 = new float[maxPieceName*4];
-  unsigned int * orients2 = new unsigned int[maxPieceName];
-
-  for (unsigned int i = 0; i < 4 * maxPieceName; i++) {
-    moves[i] = moves2[i] = 0;
-  }
-  for (unsigned int i = 0; i < maxPieceName; i++) {
-    orients[i] = orients2[i] = 0;
-    rotAngle[i] = 0;
-    rotAxisX[i] = rotAxisY[i] = rotAxisZ[i] = 0;
-    rotPivotX[i] = rotPivotY[i] = rotPivotZ[i] = 0;
-  }
 
   if (tree) {
 
-    doRecursive(tree, s  , moves, orients, center_active, 0, 0, 0);
-    doRecursive(tree, s+1, moves2, orients2, center_active, 0, 0, 0);
+    doRecursive(tree.get(), s  , moves.data(), orients.data(), center_active, 0, 0, 0);
+    doRecursive(tree.get(), s+1, moves2.data(), orients2.data(), center_active, 0, 0, 0);
 
     /* Look up rotation metadata on the destination state inside the active node.
      * doRecursive only fills positions; fetch rotation arrival from the tree state
@@ -133,9 +110,6 @@ void disasmToMoves_c::setStep(float step, bool fadeOut, bool center_active) {
         if (moves[4*i+3] > 0) moves[4*i+3] = 1;
 
   }
-
-  delete [] moves2;
-  delete [] orients2;
 }
 
 float disasmToMoves_c::getX(unsigned int piece) {
@@ -185,7 +159,7 @@ bool disasmToMoves_c::findRotationArrival(int step, unsigned int pieceName,
                                           unsigned int * axis, unsigned int * sense) const {
   if (!tree || step < 0)
     return false;
-  return findRotationArrivalRec(tree, step, pieceName, pvx, pvy, pvz, axis, sense);
+  return findRotationArrivalRec(tree.get(), step, pieceName, pvx, pvy, pvz, axis, sense);
 }
 
 bool disasmToMoves_c::findRotationArrivalRec(const separation_c * t, int step, unsigned int pieceName,
@@ -421,18 +395,8 @@ int disasmToMoves_c::doRecursive(const separation_c * tree, int step, float * ar
 
 
 
-fixedPositions_c::fixedPositions_c(const disassemblerNode_c * nd, const std::vector<unsigned int> & pc, unsigned int pcs) {
-
-  pieces = pcs;
-  x = new int[pieces];
-  y = new int[pieces];
-  z = new int[pieces];
-  visible = new bool[pieces];
-
-  for (unsigned int p = 0; p < pieces; p++) {
-    visible[p] = false;
-    x[p] = y[p] = z[p] = 0;
-  }
+fixedPositions_c::fixedPositions_c(const disassemblerNode_c * nd, const std::vector<unsigned int> & pc, unsigned int pcs)
+  : pieces(pcs), x(pcs, 0), y(pcs, 0), z(pcs, 0), visible(pcs, false) {
 
   for (unsigned int p = 0; p < pc.size(); p++) {
 
@@ -448,28 +412,11 @@ fixedPositions_c::fixedPositions_c(const disassemblerNode_c * nd, const std::vec
   }
 }
 
-fixedPositions_c::fixedPositions_c(const fixedPositions_c * nd) {
-
-  pieces = nd->pieces;
-  x = new int[pieces];
-  y = new int[pieces];
-  z = new int[pieces];
-  visible = new bool[pieces];
-
-  for (unsigned int p = 0; p < pieces; p++) {
-    x[p] = nd->x[p];
-    y[p] = nd->y[p];
-    z[p] = nd->z[p];
-    visible[p] = nd->visible[p];
-  }
+fixedPositions_c::fixedPositions_c(const fixedPositions_c * nd)
+  : pieces(nd->pieces), x(nd->x), y(nd->y), z(nd->z), visible(nd->visible) {
 }
 
-fixedPositions_c::~fixedPositions_c(void) {
-  delete [] x;
-  delete [] y;
-  delete [] z;
-  delete [] visible;
-}
+fixedPositions_c::~fixedPositions_c(void) = default;
 
 float fixedPositions_c::getX(unsigned int piece) { bt_assert(piece < pieces); return x[piece]; }
 float fixedPositions_c::getY(unsigned int piece) { bt_assert(piece < pieces); return y[piece]; }

@@ -29,34 +29,146 @@ using namespace std;
 
 const float Epsilon=1.0e-5;
 
-void faceList_c::addFace(long voxel, int face)
+/* a snapshot of the faces of a polyhedron (as triangle fans) used to test
+ * whether a point lies inside the original solid */
+typedef vector<float> triSnapshot_c;   // 9 floats per triangle
+
+static void snapshotFaces(const Polyhedron & poly, triSnapshot_c & snap)
 {
-  if (containsFace(voxel, face)) return;
+  for (Polyhedron::const_face_iterator it = poly.fBegin(); it != poly.fEnd(); ++it)
+  {
+    const Face * f = *it;
+    if (f->hole()) continue;
 
-  faceList_c::face f = {voxel, face};
-
-  faces.push_back(f);
+    Face::const_edge_circulator e = f->begin();
+    Face::const_edge_circulator sentinel = e;
+    ++e;
+    Vector3Df start = (*e)->dst()->position();
+    ++e;
+    do
+    {
+      const Vector3Df & b = (*e)->dst()->position();
+      ++e;
+      const Vector3Df & c = (*e)->dst()->position();
+      const Vector3Df * v[3] = { &start, &b, &c };
+      for (int k = 0; k < 3; k++)
+      {
+        snap.push_back(v[k]->x());
+        snap.push_back(v[k]->y());
+        snap.push_back(v[k]->z());
+      }
+    } while (e != sentinel);
+  }
 }
 
-void faceList_c::removeFace(long voxel, int face)
+/* ray parity test along +x against the snapshot. The query points are
+ * slightly jittered by the caller so hitting edges exactly is no concern */
+static bool insideSnapshot(const triSnapshot_c & snap, float px, float py, float pz)
 {
-  for (unsigned int i = 0; i < faces.size(); i++)
-    if (faces[i].voxel == voxel && faces[i].faceNum == face)
+  int crossings = 0;
+  for (size_t i = 0; i < snap.size(); i += 9)
+  {
+    const float * a = &snap[i];
+    const float * b = &snap[i+3];
+    const float * c = &snap[i+6];
+
+    // intersect ray (px,py,pz)+t*(1,0,0), t>0 with triangle abc:
+    // project on the yz plane
+    float y0 = a[1]-py, z0 = a[2]-pz;
+    float y1 = b[1]-py, z1 = b[2]-pz;
+    float y2 = c[1]-py, z2 = c[2]-pz;
+
+    float d0 = y0*z1 - y1*z0;
+    float d1 = y1*z2 - y2*z1;
+    float d2 = y2*z0 - y0*z2;
+
+    if ((d0 > 0 && d1 > 0 && d2 > 0) || (d0 < 0 && d1 < 0 && d2 < 0))
     {
-      faces.erase(faces.begin()+i);
-      return;
+      float area = d0 + d1 + d2;
+      // barycentric interpolation of x at the hit
+      float x = (a[0]*d1 + b[0]*d2 + c[0]*d0) / area;
+      if (x > px)
+        crossings++;
     }
+  }
+  return (crossings & 1) != 0;
 }
 
-bool faceList_c::containsFace(long voxel, int face) const
+/* distance from p along direction d (unit) to the nearest snapshot
+ * triangle, or -1 when nothing is hit */
+static float rayDepthSnapshot(const triSnapshot_c & snap, const Vector3Df & p, const Vector3Df & d)
 {
-  for (unsigned int i = 0; i < faces.size(); i++)
-    if (faces[i].voxel == voxel && faces[i].faceNum == face)
-    {
-      return true;
-    }
+  float best = -1;
+  for (size_t i = 0; i < snap.size(); i += 9)
+  {
+    Vector3Df a(snap[i  ], snap[i+1], snap[i+2]);
+    Vector3Df b(snap[i+3], snap[i+4], snap[i+5]);
+    Vector3Df c(snap[i+6], snap[i+7], snap[i+8]);
 
-  return false;
+    // Moeller-Trumbore
+    Vector3Df e1 = b - a, e2 = c - a;
+    Vector3Df pv = d ^ e2;
+    float det = e1 * pv;
+    if (det > -1e-9f && det < 1e-9f) continue;
+    float inv = 1.0f / det;
+    Vector3Df tv = p - a;
+    float uu = (tv * pv) * inv;
+    if (uu < -1e-4f || uu > 1.0001f) continue;
+    Vector3Df qv = tv ^ e1;
+    float vv = (d * qv) * inv;
+    if (vv < -1e-4f || uu + vv > 1.0001f) continue;
+    float t = (e2 * qv) * inv;
+    if (t > 1e-5f && (best < 0 || t < best)) best = t;
+  }
+  return best;
+}
+
+/* is a candidate replacement/cap face acceptable? Its surface must lie on
+ * the solid: points just below its centre and below each corner have to be
+ * inside the snapshot of the original surface. Faces failing this would
+ * bridge across a concave corner and add material outside the solid */
+static bool faceOnSolid(const triSnapshot_c & snap, const vector<Vector3Df> & pts)
+{
+  Vector3Df cen(0,0,0);
+  for (size_t i = 0; i < pts.size(); i++) cen += pts[i];
+  cen /= (float)pts.size();
+
+  Vector3Df nrm = (pts[1]-pts[0]) ^ (pts[2]-pts[0]);
+  float l = sqrt(nrm*nrm);
+  if (l <= 0) return true;
+  nrm /= l;
+
+  float mine = -1;
+  for (size_t i = 0; i < pts.size(); i++)
+  {
+    Vector3Df d = pts[(i+1)%pts.size()] - pts[i];
+    float e = sqrt(d*d);
+    if (mine < 0 || e < mine) mine = e;
+  }
+  /* probe just below the surface: valid faces have material directly
+   * underneath everywhere; bridging faces hover above a void. The probes
+   * stay in the interior of the face (half way to the corners) and only
+   * a little below it, so bevelled edges of thin material nearby don't
+   * cause false alarms */
+  float eps = 0.08f * mine;
+
+  for (size_t pr = 0; pr <= pts.size(); pr++)
+  {
+    Vector3Df q0 = cen;
+    if (pr > 0) q0 = (cen + pts[pr-1]) * 0.5f;
+    Vector3Df q = q0 - nrm*eps;
+    if (insideSnapshot(snap, q.x(), q.y()+1.1e-4f, q.z()+1.7e-4f))
+      continue;
+    /* no material directly below this probe. That is fine when the cap
+     * roofs over a shallow groove (floor close below) and also at a
+     * convex corner where the probe overshoots into open air (no floor
+     * at all); but a distant floor means the face bridges across a
+     * concave junction and would add material outside the solid */
+    float depth = rayDepthSnapshot(snap, q0, -nrm);
+    if (depth >= 0 && depth > 1.5f * mine)
+      return false;
+  }
+  return true;
 }
 
 /* this routine attempts to find a good quad or triangle in which to
@@ -136,7 +248,7 @@ static int findBestTriOrQuad(vector<Vertex*> vs, int &offset)
 
 // this routine tries to find the best set of tris and quads to cap the edge list
 
-static void findOptimizedFaces(Polyhedron &poly, const vector<Vertex*>& corners)
+static void findOptimizedFaces(Polyhedron &poly, const vector<Vertex*>& corners, const triSnapshot_c & snap)
 {
   vector<Vertex*> working_set;
   uint32_t flags=0;
@@ -158,6 +270,17 @@ static void findOptimizedFaces(Polyhedron &poly, const vector<Vertex*>& corners)
     int ret = findBestTriOrQuad(working_set,offset);
     int old_size = working_set.size();
     vector<int> pts;
+
+    if (ret)
+    {
+      // the cap must lie on the surface of the solid, otherwise it would
+      // bridge across a concave corner; fall back to the triangle fan
+      vector<Vector3Df> cand;
+      for (int j = 0; j < ret; j++)
+        cand.push_back(working_set[(offset+j) % old_size]->position());
+      if (!faceOnSolid(snap, cand))
+        ret = 0;
+    }
 
     if (ret)
     {
@@ -227,6 +350,12 @@ void fillPolyhedronHoles(Polyhedron & poly, bool fillOutsides)
 {
   set<Face*> faces_to_remove;
 
+  /* remember the original surface: replacement faces must never add
+   * material outside of it (which used to happen at concave corners,
+   * making stacked pieces of a puzzle interpenetrate) */
+  triSnapshot_c snap;
+  snapshotFaces(poly, snap);
+
 
   for (Polyhedron::face_iterator fit = poly.fBegin(); fit != poly.fEnd(); ++fit)
   {
@@ -271,11 +400,6 @@ void fillPolyhedronHoles(Polyhedron & poly, bool fillOutsides)
         // reduce multiple faces into single face
         if (faces.size()>1)
         {
-          // construct master list of faces to be removed
-          for (set<Face*>::const_iterator sit = faces.begin(); sit != faces.end(); ++sit)
-          {
-            faces_to_remove.insert(*sit);
-          }
 	  // calculate angle between starting and ending face
 	  Vector3Df n0 = f->normal();
 	  Vector3Df n1 = (*fit)->normal();
@@ -289,6 +413,39 @@ void fillPolyhedronHoles(Polyhedron & poly, bool fillOutsides)
           face4[2] = edge->dst()->index();
           face4[3] = edge->src()->index();
 
+          /* the replacement face may only be used when it does not bridge
+           * across a concave junction - there it would add material
+           * outside the solid, so the groove faces are kept instead.
+           * Concavity is decided exactly from the two rims: at a concave
+           * junction each rim lies above the plane of the opposite rim's
+           * face, at a convex or straight junction on or below it (a
+           * purely local test that cannot give phase-dependent results
+           * along a lattice edge) */
+          if (angle >= Epsilon)
+          {
+            Vector3Df p0 = poly.vertex(face4[0])->position();
+            Vector3Df p1 = poly.vertex(face4[1])->position();
+            Vector3Df p2 = poly.vertex(face4[2])->position();
+            Vector3Df p3 = poly.vertex(face4[3])->position();
+
+            /* rim p0/p1 borders the face with normal n1, rim p2/p3 the
+             * one with normal n0 */
+            const float tol = 1e-4f;
+            if ((p2 - p1) * n1 > tol || (p3 - p0) * n1 > tol ||
+                (p1 - p2) * n0 > tol || (p0 - p3) * n0 > tol)
+            {
+              faces.clear();
+              ++ei;
+              continue;
+            }
+          }
+
+          // construct master list of faces to be removed
+          for (set<Face*>::const_iterator sit = faces.begin(); sit != faces.end(); ++sit)
+          {
+            faces_to_remove.insert(*sit);
+          }
+
           f = poly.addFace(face4);   // add new one
 
 	  if (angle<Epsilon) // if face is co-planar, mask wireframe bit
@@ -300,7 +457,7 @@ void fillPolyhedronHoles(Polyhedron & poly, bool fillOutsides)
         }
 
         faces.clear();
-        ei++;
+        ++ei;
       }
       while (ei != sentinel);
     }
@@ -331,7 +488,7 @@ void fillPolyhedronHoles(Polyhedron & poly, bool fillOutsides)
             {
               break;
             }
-            ei++;
+            ++ei;
           }
           while (ei != sentinel);
 
@@ -368,7 +525,7 @@ void fillPolyhedronHoles(Polyhedron & poly, bool fillOutsides)
   map<pair<Vertex*,Vertex*>,HalfEdge*>::iterator cit;
   vector<Vertex*> pts_list;
 
-  for (Polyhedron::edge_iterator eit = poly.eBegin(); eit != poly.eEnd(); eit++)
+  for (Polyhedron::edge_iterator eit = poly.eBegin(); eit != poly.eEnd(); ++eit)
   {
     if ((*eit)->twin() == 0)
     {
@@ -416,7 +573,7 @@ void fillPolyhedronHoles(Polyhedron & poly, bool fillOutsides)
     if (pts_list.size())
     {
       // find best capping for hole
-      findOptimizedFaces(poly,pts_list);
+      findOptimizedFaces(poly,pts_list,snap);
       pts_list.clear();
     }
   }
@@ -428,201 +585,505 @@ void fillPolyhedronHoles(Polyhedron & poly, bool fillOutsides)
 
 void scalePolyhedron(Polyhedron & poly, float val)
 {
-   for (Polyhedron::vertex_iterator it = poly.vBegin(); it != poly.vEnd(); it++)
+   for (Polyhedron::vertex_iterator it = poly.vBegin(); it != poly.vEnd(); ++it)
    {
       (*it)->position((*it)->position()*val);
    }
 }
 
-static void joinTubePairs(Polyhedron & poly, Face *inside, Face *outside, float holeSize)
+void scalePolyhedron(Polyhedron & poly, float x, float y, float z)
 {
-  unsigned int i;
-  Vector3Df center(0,0,0);
-  std::vector<int> corners;
-  std::vector<int> tube_corners;
-  set<Face*> faces_to_remove;
-  if (inside->size() != outside->size())
-  {
-    return;
-  }
-
-  // calculate center of inside face
-  // by averaging all the vertices of the face
-
-  Face::const_edge_circulator ei = inside->begin();
-  Face::const_edge_circulator sentinel=ei;
-  do
-  {
-    center += (*ei)->dst()->position();
-    ei++;
-  }
-  while (ei!=sentinel);
-
-  center /= (float)inside->size();
-  ei = inside->begin();
-  sentinel=ei;
-
-  // generate "hole" vertices on inside face by interpolating each vertex
-  // towards the center of the face
-
-  do
-  {
-    Vertex *v = poly.addVertex((*ei)->dst()->position()*holeSize+center*(1.0-holeSize));
-    tube_corners.push_back(v->index());
-    corners.push_back(v->index());
-    corners.push_back((*ei)->dst()->index());
-    ei++;
-  }
-  while (ei!=sentinel);
-
-  // create new faces for the inside to create the hole
-
-  for (i = 0; i < corners.size(); i+=2)
-  {
-    vector<int> face4(4);
-    face4[0] = corners[i];
-    face4[1] = corners[i+1];
-    face4[2] = corners[(i+3)%corners.size()];
-    face4[3] = corners[(i+2)%corners.size()];
-
-    Face *f = poly.addFace(face4);   // add new one
-    f->_flags = inside->_flags;
-    f->_fb_index = inside->_fb_index;
-    f->_fb_face = inside->_fb_face;
-  }
-
-  // repeat the same idea for the outside face
-  // generate the center (average) of the outside face
-
-  ei=outside->begin();
-  sentinel=ei;
-  center.set(0,0,0);
-
-  do
-  {
-    center += (*ei)->dst()->position();
-    ei++;
-  }
-  while (ei!=sentinel);
-
-  center /= (float)inside->size();
-  ei=outside->begin();
-  sentinel=ei;
-  corners.clear();
-
-  // generate outside "hole" vertices by interpolating vertex towards center
-
-  do
-  {
-    Vertex *v = poly.addVertex((*ei)->dst()->position()*holeSize+center*(1.0-holeSize));
-    tube_corners.push_back(v->index());
-    corners.push_back(v->index());
-    corners.push_back((*ei)->dst()->index());
-    ei++;
-  }
-  while (ei!=sentinel);
-
-  // create new faces for the outside to create the hole
-
-  for (i = 0; i < corners.size(); i+=2)
-  {
-    vector<int> face4(4);
-    face4[0] = corners[i];
-    face4[1] = corners[i+1];
-    face4[2] = corners[(i+3)%corners.size()];
-    face4[3] = corners[(i+2)%corners.size()];
-
-    Face *f = poly.addFace(face4);   // add new one
-    f->_flags = outside->_flags;
-    f->_fb_index = outside->_fb_index;
-    f->_fb_face = outside->_fb_face;
-  }
-  // since edge iterators are arbitrary to the face, need to find closest
-  // pair between inside and outside hole
-
-  const unsigned int tube_size = tube_corners.size()/2;
-  double max_dist=1e99;
-  int closest=-1;
-
-  for (i = tube_size; i < tube_size*2; i++)
-  {
-    Vector3Df  temp = poly.vertex(tube_corners[i])->position()-
-                      poly.vertex(tube_corners[0])->position();
-    double temp_dist = temp.squaredModule();
-
-    if (temp_dist < max_dist)
-    {
-      closest=i;
-      max_dist = temp_dist;
-    }
-  }
-
-  // connect the inside and outside holes with an N-sided tube
-
-  for (i = 0; i < tube_size; i++)
-  {
-    vector<int> face4(4);
-    face4[0] = tube_corners[i];
-    face4[1] = tube_corners[(i+1)%tube_size];
-    face4[2] = tube_corners[tube_size+((tube_size+closest-(1+i))%tube_size)];
-    face4[3] = tube_corners[tube_size+((tube_size+closest-i)%tube_size)];
-
-    Face *f = poly.addFace(face4);   // add new one
-    f->_flags = outside->_flags|inside->_flags;
-    f->_fb_index = outside->_fb_index;
-    f->_fb_face = outside->_fb_face;
-  }
-
-  // remove original faces
-  faces_to_remove.insert(inside);
-  faces_to_remove.insert(outside);
-  eraseFaces(&poly,faces_to_remove);
-  faces_to_remove.clear();
+   for (Polyhedron::vertex_iterator it = poly.vBegin(); it != poly.vEnd(); ++it)
+   {
+      const Vector3Df & p = (*it)->position();
+      (*it)->position(Vector3Df(p.x()*x, p.y()*y, p.z()*z));
+   }
 }
 
-void joinPolyhedronInverse(Polyhedron & poly, const Polyhedron & inv, const faceList_c & holes, float holeSize)
-{
-  std::vector<std::pair<Face*,Face*> > face_pairs;
-  int vertexOffset = poly.numVertices();
+/* ------------------------------------------------------------------ */
+/* merging of coplanar faces                                          */
+/* ------------------------------------------------------------------ */
 
-  for (int i = 0; i < inv.numVertices(); i++)
+/* a 2d point used during the retriangulation of merged face groups */
+struct point2D_s
+{
+  double x, y;
+};
+
+/* twice the signed area of the triangle a, b, c */
+static double triArea2(const point2D_s & a, const point2D_s & b, const point2D_s & c)
+{
+  return (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x);
+}
+
+static bool samePoint(const point2D_s & a, const point2D_s & b)
+{
+  return a.x == b.x && a.y == b.y;
+}
+
+/* is p inside the closed ccw triangle a, b, c */
+static bool pointInTriangle(const point2D_s & p, const point2D_s & a, const point2D_s & b, const point2D_s & c, double eps)
+{
+  return triArea2(a, b, p) >= -eps && triArea2(b, c, p) >= -eps && triArea2(c, a, p) >= -eps;
+}
+
+/* do the open segments a-b and c-d properly cross one another */
+static bool segmentsCross(const point2D_s & a, const point2D_s & b, const point2D_s & c, const point2D_s & d)
+{
+  double d1 = triArea2(c, d, a);
+  double d2 = triArea2(c, d, b);
+  double d3 = triArea2(a, b, c);
+  double d4 = triArea2(a, b, d);
+
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+         ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/* triangulate the weakly simple ccw polygon given by poly (indices into
+ * pts) by ear clipping. The emitted triangles are appended to tris as
+ * index triples. Returns false, when no ear can be clipped any more even
+ * though more than 2 corners are left
+ */
+static bool earClip(std::vector<int> poly, const std::vector<point2D_s> & pts, std::vector<int> & tris, double eps, double fatEps)
+{
+  unsigned int i = 0;
+
+  while (poly.size() > 2)
   {
-    poly.addVertex(inv.vertex(i)->position());
+    bool clipped = false;
+
+    // first look for an ear with a decent area, only when there is none
+    // accept a sliver, that keeps nearly collinear corners from producing
+    // degenerate triangles when there is a better choice
+    for (int pass = 0; pass < 2 && !clipped; pass++)
+    {
+    double minArea = pass == 0 ? fatEps : eps;
+
+    for (unsigned int tries = 0; tries < poly.size(); tries++, i++)
+    {
+      unsigned int ia = poly[(i  ) % poly.size()];
+      unsigned int ib = poly[(i+1) % poly.size()];
+      unsigned int ic = poly[(i+2) % poly.size()];
+
+      const point2D_s & a = pts[ia];
+      const point2D_s & b = pts[ib];
+      const point2D_s & c = pts[ic];
+
+      // the ear tip must be strictly convex
+      if (triArea2(a, b, c) <= minArea)
+        continue;
+
+      // no other corner of the polygon may lie within the ear
+      bool blocked = false;
+
+      for (unsigned int j = 0; j < poly.size(); j++)
+      {
+        const point2D_s & p = pts[poly[j]];
+
+        if (samePoint(p, a) || samePoint(p, b) || samePoint(p, c))
+          continue;
+
+        if (pointInTriangle(p, a, b, c, eps))
+        {
+          blocked = true;
+          break;
+        }
+      }
+
+      if (blocked)
+        continue;
+
+      tris.push_back(ia);
+      tris.push_back(ib);
+      tris.push_back(ic);
+
+      poly.erase(poly.begin() + ((i+1) % poly.size()));
+      clipped = true;
+      break;
+    }
+    }
+
+    if (!clipped)
+      return false;
   }
 
-  for (Polyhedron::const_face_iterator fit = inv.fBegin(); fit != inv.fEnd(); ++fit)
-  {
-    Face::const_edge_circulator ei = (*fit)->begin();
-    Face::const_edge_circulator sentinel=ei;
-    Face *fp;
+  return true;
+}
 
-    std::vector<int> corners;
+/* copy one face of the source polyhedron into the destination */
+static void copyFace(Polyhedron * dst, vertexList_c & vl, const Face * f)
+{
+  std::vector<int> corners;
+
+  Face::const_edge_circulator e = f->begin();
+  Face::const_edge_circulator sentinel = e;
+
+  do
+  {
+    const Vector3Df & p = (*e)->dst()->position();
+    corners.push_back(vl.get(p.x(), p.y(), p.z()));
+    ++e;
+  } while (e != sentinel);
+
+  Face * f2 = dst->addFace(corners);
+
+  f2->_flags = f->_flags;
+  f2->_color = f->_color;
+  f2->_fb_index = f->_fb_index;
+  f2->_fb_face = f->_fb_face;
+}
+
+/* try to merge one group of connected coplanar faces into fewer, larger
+ * triangles and add those to the destination polyhedron. Returns false
+ * when anything goes wrong, in that case nothing has been added
+ */
+static bool mergeGroup(Polyhedron * dst, vertexList_c & vl, const std::vector<const Face *> & group, const std::set<const Face *> & inGroup)
+{
+  // collect the boundary edges of the group. An edge is on the boundary
+  // when the face on the other side is not part of the group. The map is
+  // keyed by the vertex index to keep everything deterministic
+  std::multimap<int, std::pair<const Vertex *, const Vertex *> > boundary;
+
+  for (unsigned int i = 0; i < group.size(); i++)
+  {
+    Face::const_edge_circulator e = group[i]->begin();
+    Face::const_edge_circulator sentinel = e;
 
     do
     {
-      corners.insert(corners.begin(), vertexOffset + (*ei)->src()->index());
-      ei++;
-    }
-    while (ei != sentinel);
+      const HalfEdge * he = *e;
+      const HalfEdge * tw = he->twin();
 
-    fp = poly.addFace(corners);
-    fp->_flags |= FF_INSIDE_FACE;
-    fp->_fb_index = (*fit)->_fb_index;
-    fp->_fb_face = (*fit)->_fb_face;
-    if (holes.containsFace(fp->_fb_index, fp->_fb_face))
-    {
-      for (Polyhedron::face_iterator fit2 = poly.fBegin(); fit2 != poly.fEnd(); ++fit2)
+      if (!tw || !tw->face() || tw->face()->hole() || inGroup.find(tw->face()) == inGroup.end())
       {
-        if ((*fit2)->_fb_index == fp->_fb_index &&
-            (*fit2)->_fb_face  == fp->_fb_face &&
-            fp != (*fit2) && fp->_fb_face!=-1) // no bevel/offset faces
+        const Vertex * src = he->prev()->dst();
+        boundary.insert(std::make_pair(src->index(), std::make_pair(src, he->dst())));
+      }
+
+      ++e;
+    } while (e != sentinel);
+  }
+
+  // assemble the boundary edges into closed loops
+  std::vector<std::vector<const Vertex *> > loops;
+
+  while (!boundary.empty())
+  {
+    std::vector<const Vertex *> loop;
+
+    const Vertex * start = boundary.begin()->second.first;
+    const Vertex * cur = start;
+
+    do
+    {
+      std::multimap<int, std::pair<const Vertex *, const Vertex *> >::iterator it = boundary.find(cur->index());
+
+      if (it == boundary.end())
+        return false;
+
+      loop.push_back(cur);
+      cur = it->second.second;
+      boundary.erase(it);
+    } while (cur != start);
+
+    if (loop.size() < 3)
+      return false;
+
+    loops.push_back(loop);
+  }
+
+  if (loops.empty())
+    return false;
+
+  // set up a projection onto the plane of the group that keeps the
+  // outside loop counter clockwise
+  Vector3Df n = group[0]->normal();
+
+  int u, v;
+
+  if (fabs(n.x()) >= fabs(n.y()) && fabs(n.x()) >= fabs(n.z()))
+  { u = 1; v = 2; if (n.x() < 0) { u = 2; v = 1; } }
+  else if (fabs(n.y()) >= fabs(n.z()))
+  { u = 2; v = 0; if (n.y() < 0) { u = 0; v = 2; } }
+  else
+  { u = 0; v = 1; if (n.z() < 0) { u = 1; v = 0; } }
+
+  // project all loops to 2d
+  std::vector<point2D_s> pts;
+  std::vector<const Vertex *> ptVertex;
+  std::vector<std::vector<int> > loops2;
+  std::vector<double> loopArea;
+
+  double totalArea = 0;
+
+  for (unsigned int l = 0; l < loops.size(); l++)
+  {
+    std::vector<int> l2;
+
+    for (unsigned int i = 0; i < loops[l].size(); i++)
+    {
+      point2D_s p;
+      p.x = loops[l][i]->position()[u];
+      p.y = loops[l][i]->position()[v];
+      l2.push_back(pts.size());
+      pts.push_back(p);
+      ptVertex.push_back(loops[l][i]);
+    }
+
+    double area = 0;
+    for (unsigned int i = 0; i < l2.size(); i++)
+    {
+      const point2D_s & a = pts[l2[i]];
+      const point2D_s & b = pts[l2[(i+1) % l2.size()]];
+      area += a.x*b.y - b.x*a.y;
+    }
+    area /= 2;
+
+    loops2.push_back(l2);
+    loopArea.push_back(area);
+    totalArea += area;
+  }
+
+  if (totalArea <= 0)
+    return false;
+
+  // the loop with the largest area is the outline, all other loops must
+  // be holes and run the other way around
+  unsigned int outer = 0;
+  for (unsigned int l = 1; l < loops2.size(); l++)
+    if (loopArea[l] > loopArea[outer])
+      outer = l;
+
+  if (loopArea[outer] <= 0)
+    return false;
+
+  for (unsigned int l = 0; l < loops2.size(); l++)
+    if (l != outer && loopArea[l] >= 0)
+      return false;
+
+  std::vector<int> polygon = loops2[outer];
+
+  // connect the holes to the outline with bridges, this makes one big
+  // weakly simple polygon that the ear clipper can handle
+  std::vector<unsigned int> holeIdx;
+  for (unsigned int l = 0; l < loops2.size(); l++)
+    if (l != outer)
+      holeIdx.push_back(l);
+
+  for (unsigned int h = 0; h < holeIdx.size(); h++)
+  {
+    const std::vector<int> & hole = loops2[holeIdx[h]];
+
+    // find the closest pair of corners between the polygon so far and
+    // the hole where the connecting line crosses no edge
+    int bestP = -1;
+    int bestH = -1;
+    double bestDist = 0;
+
+    for (unsigned int a = 0; a < polygon.size(); a++)
+      for (unsigned int b = 0; b < hole.size(); b++)
+      {
+        const point2D_s & pa = pts[polygon[a]];
+        const point2D_s & pb = pts[hole[b]];
+
+        double dist = (pa.x-pb.x)*(pa.x-pb.x) + (pa.y-pb.y)*(pa.y-pb.y);
+
+        if (bestP != -1 && dist >= bestDist)
+          continue;
+
+        // the bridge must not cross the polygon, this hole or any of the
+        // holes that still wait for their bridge
+        bool crosses = false;
+
+        for (unsigned int i = 0; i < polygon.size() && !crosses; i++)
+          if (segmentsCross(pa, pb, pts[polygon[i]], pts[polygon[(i+1) % polygon.size()]]))
+            crosses = true;
+
+        for (unsigned int h2 = h; h2 < holeIdx.size() && !crosses; h2++)
         {
-          face_pairs.push_back(pair<Face *,Face *>(fp,*fit2));
+          const std::vector<int> & hl = loops2[holeIdx[h2]];
+          for (unsigned int i = 0; i < hl.size() && !crosses; i++)
+            if (segmentsCross(pa, pb, pts[hl[i]], pts[hl[(i+1) % hl.size()]]))
+              crosses = true;
+        }
+
+        if (!crosses)
+        {
+          bestP = a;
+          bestH = b;
+          bestDist = dist;
         }
       }
-    }
+
+    if (bestP == -1)
+      return false;
+
+    // splice the hole into the polygon, the 2 bridge corners appear twice
+    std::vector<int> merged;
+
+    for (int i = 0; i <= bestP; i++)
+      merged.push_back(polygon[i]);
+
+    for (unsigned int i = 0; i <= hole.size(); i++)
+      merged.push_back(hole[(bestH + i) % hole.size()]);
+
+    for (unsigned int i = bestP; i < polygon.size(); i++)
+      merged.push_back(polygon[i]);
+
+    polygon = merged;
   }
-  for (std::vector<int>::size_type i=0; i<face_pairs.size(); i++)
-    joinTubePairs(poly,face_pairs[i].first,face_pairs[i].second, holeSize);
-  face_pairs.clear();
+
+  // triangulate
+  std::vector<int> tris;
+
+  double eps = 1e-12 * loopArea[outer];
+  if (eps < 1e-20) eps = 1e-20;
+
+  double fatEps = 1e-7 * loopArea[outer];
+
+  if (!earClip(polygon, pts, tris, eps, fatEps))
+    return false;
+
+  // the area of the triangles must add up to the area of the group
+  double triArea = 0;
+  for (unsigned int t = 0; t < tris.size(); t += 3)
+    triArea += triArea2(pts[tris[t]], pts[tris[t+1]], pts[tris[t+2]]) / 2;
+
+  if (fabs(triArea - totalArea) > 1e-4 * totalArea)
+    return false;
+
+  // no emitted triangle may be exactly degenerate, that would get a
+  // NaN normal
+  for (unsigned int t = 0; t < tris.size(); t += 3)
+  {
+    Vector3Df a = ptVertex[tris[t  ]]->position();
+    Vector3Df b = ptVertex[tris[t+1]]->position();
+    Vector3Df c = ptVertex[tris[t+2]]->position();
+
+    Vector3Df cr = (b-a) ^ (c-a);
+
+    if (cr * cr == 0)
+      return false;
+  }
+
+  // all went well, add the triangles
+  for (unsigned int t = 0; t < tris.size(); t += 3)
+  {
+    std::vector<int> corners;
+
+    for (unsigned int c = 0; c < 3; c++)
+    {
+      const Vector3Df & p = ptVertex[tris[t+c]]->position();
+      corners.push_back(vl.get(p.x(), p.y(), p.z()));
+    }
+
+    Face * f2 = dst->addFace(corners);
+
+    f2->_flags = group[0]->_flags;
+    f2->_color = group[0]->_color;
+    f2->_fb_index = group[0]->_fb_index;
+    f2->_fb_face = group[0]->_fb_face;
+  }
+
+  return true;
+}
+
+Polyhedron * mergeCoplanarFaces(const Polyhedron & src)
+{
+  // find groups of connected coplanar faces
+  std::map<const Face *, int> groupOf;
+  std::vector<std::vector<const Face *> > groups;
+
+  for (Polyhedron::const_face_iterator it = src.fBegin(); it != src.fEnd(); ++it)
+  {
+    const Face * f = *it;
+
+    if (f->hole() || groupOf.find(f) != groupOf.end())
+      continue;
+
+    Vector3Df n = f->normal();
+    double d = n * f->edge()->dst()->position();
+
+    std::vector<const Face *> group;
+    std::vector<const Face *> stack;
+
+    groupOf[f] = groups.size();
+    stack.push_back(f);
+
+    while (!stack.empty())
+    {
+      const Face * cur = stack.back();
+      stack.pop_back();
+      group.push_back(cur);
+
+      Face::const_edge_circulator e = cur->begin();
+      Face::const_edge_circulator sentinel = e;
+
+      do
+      {
+        const HalfEdge * tw = (*e)->twin();
+
+        if (tw && tw->face() && !tw->face()->hole() && groupOf.find(tw->face()) == groupOf.end())
+        {
+          const Face * cand = tw->face();
+
+          // the candidate is part of the group when it lies in the
+          // same plane
+          if (n * cand->normal() > 1 - 1e-6)
+          {
+            bool inPlane = true;
+
+            Face::const_edge_circulator e2 = cand->begin();
+            Face::const_edge_circulator sentinel2 = e2;
+
+            do
+            {
+              if (fabs(n * (*e2)->dst()->position() - d) > 1e-5)
+              {
+                inPlane = false;
+                break;
+              }
+              ++e2;
+            } while (e2 != sentinel2);
+
+            if (inPlane)
+            {
+              groupOf[cand] = groups.size();
+              stack.push_back(cand);
+            }
+          }
+        }
+
+        ++e;
+      } while (e != sentinel);
+    }
+
+    groups.push_back(group);
+  }
+
+  // build the new polyhedron
+  Polyhedron * res = new Polyhedron();
+  vertexList_c vl(res);
+
+  for (unsigned int g = 0; g < groups.size(); g++)
+  {
+    if (groups[g].size() > 1)
+    {
+      std::set<const Face *> inGroup(groups[g].begin(), groups[g].end());
+
+      // count the faces of the result so we can undo a failed merge
+      int facesBefore = res->numFaces();
+
+      if (mergeGroup(res, vl, groups[g], inGroup))
+        continue;
+
+      // the merge must not leave half added groups behind
+      bt_assert(res->numFaces() == facesBefore);
+    }
+
+    for (unsigned int i = 0; i < groups[g].size(); i++)
+      copyFace(res, vl, groups[g][i]);
+  }
+
+  return res;
 }

@@ -22,6 +22,8 @@
 #include "lib/puzzle.h"
 #include "lib/problem.h"
 #include "lib/solvethread.h"
+#include "lib/bt_assert.h"
+#include "lib/gridtype.h"
 #include "lib/voxel.h"
 #include "tools/xml.h"
 #include "tools/gzstream.h"
@@ -71,7 +73,7 @@ bool checkInput(void)
 }
 
 
-int main(int argv, char* args[]) {
+static int solve(int argv, char* args[]) {
 
   if (argv < 1) {
     usage();
@@ -112,10 +114,36 @@ int main(int argv, char* args[]) {
     return 1;
   }
 
-  std::istream * str = openGzFile(args[filenumber]);
+  auto str = openGzFile(args[filenumber]);
+  if (!str) {
+    cout << "could not open input file \"" << args[filenumber] << "\"\n";
+    return 2;
+  }
   xmlParser_c pars(*str);
   puzzle_c p(pars);
-  delete str;
+
+  if (firstProblem < 0 || (unsigned int)firstProblem >= p.getNumberOfProblems()) {
+    cout << "the file has " << p.getNumberOfProblems() << " problem(s), there is no problem "
+         << firstProblem << "\n";
+    return 2;
+  }
+
+  /* not every space grid has a solver, and fewer still have a disassembler.
+   * Check before we build one: the disassembler asserts on the movement cache
+   * a grid without CAP_DISASSEMBLE does not provide.
+   */
+  const unsigned int caps = p.getGridType()->getCapabilities();
+
+  if (!(caps & gridType_c::CAP_ASSEMBLE)) {
+    cout << "Sorry, this space grid doesn't have an assembler (yet)\n";
+    return 2;
+  }
+
+  if ((par & solveThread_c::PAR_DISASSM) && !(caps & gridType_c::CAP_DISASSEMBLE)) {
+    cout << "Sorry, this space grid doesn't have a disassembler (yet)\n";
+    cout << "drop -d to just assemble the puzzle\n";
+    return 2;
+  }
 
   std::string outname = args[filenumber];
   outname += "ttt";
@@ -132,13 +160,31 @@ int main(int argv, char* args[]) {
     p.getShape(i)->initHotspot();
 
 
+  int exitCode = 0;
+
   for (int pr = firstProblem ; pr < lastProblem ; pr++) {
 
+    problem_c * problem = p.getProblem(pr);
+
     if (restart)
-      p.getProblem(pr)->removeAllSolutions();
+      problem->removeAllSolutions();
 
+    /* without -R we continue where an earlier run left off. A problem that is
+     * already finished, or whose information was invalidated by editing, has
+     * nothing to continue from, and setAssembler's precondition rejects one.
+     */
+    if (!problem->canStartSolving()) {
+      cout << "problem " << pr << " (" << problem->getName() << ") ";
+      if (problem->getSolveState() == SS_SOLVED)
+        cout << "is already solved: " << problem->getNumAssemblies() << " assemblies, "
+             << problem->getNumSolutions() << " solutions\n";
+      else
+        cout << "has no state to continue from\n";
+      cout << "use -R to solve it again\n";
+      continue;
+    }
 
-    solveThread_c assmThread(*p.getProblem(pr), par);
+    solveThread_c assmThread(*problem, par);
 
     if (!assmThread.start(false)) {
       cout << "Could not start Solver\n";
@@ -148,19 +194,38 @@ int main(int argv, char* args[]) {
     assmThread.waitUntilFinished();
 
     if (assmThread.currentAction() == solveThread_c::ACT_ERROR) {
+      cout << "error in solver\n";
+      exitCode = 1;
+    } else if (assmThread.currentAction() == solveThread_c::ACT_ASSERT) {
       cout << "Exception in Solver\n";
-      cout << " file      : " << assmThread.getAssertException().file;
-      cout << " function  : " << assmThread.getAssertException().function;
-      cout << " line      : " << assmThread.getAssertException().line;
-      cout << " expression: " << assmThread.getAssertException().expr;
-      return 1;
+      cout << " file      : " << assmThread.getAssertException().file << "\n";
+      cout << " function  : " << assmThread.getAssertException().function << "\n";
+      cout << " line      : " << assmThread.getAssertException().line << "\n";
+      cout << " expression: " << assmThread.getAssertException().expr << "\n";
+      exitCode = 1;
     }
   }
 
   xmlWriter_c xml(ostr);
   p.save(xml);
 
-  return 0;
+  return exitCode;
+}
+
+int main(int argv, char* args[]) {
+
+  try {
+    return solve(argv, args);
+  }
+
+  catch (assert_exception & a) {
+    cout << "Exception\n";
+    cout << " file      : " << a.file << "\n";
+    cout << " function  : " << a.function << "\n";
+    cout << " line      : " << a.line << "\n";
+    cout << " expression: " << a.expr << "\n";
+    return 1;
+  }
 }
 
 

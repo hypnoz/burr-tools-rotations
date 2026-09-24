@@ -1539,7 +1539,7 @@ static GLboolean gl2psLess(GLfloat f1, GLfloat f2)
 
 static void gl2psBuildBspTree(GL2PSbsptree *tree, GL2PSlist *primitives)
 {
-  GL2PSprimitive *prim, *frontprim = NULL, *backprim = NULL;
+  GL2PSprimitive *prim = NULL, *frontprim = NULL, *backprim = NULL;
   GL2PSlist *frontlist, *backlist;
   GLint i, index;
 
@@ -5933,8 +5933,9 @@ GL2PSDLL_API GLint gl2psDrawImageMap(GLsizei width, GLsizei height,
   glPassThrough((GLfloat)width);
   glPassThrough((GLfloat)height);
   for(i = 0; i < size; i += sizeoffloat){
-    float *value = (float*)imagemap;
-    glPassThrough(*value);
+    float value;
+    memcpy(&value, imagemap, sizeof(float));
+    glPassThrough(value);
     imagemap += sizeoffloat;
   }
   return GL2PS_SUCCESS;

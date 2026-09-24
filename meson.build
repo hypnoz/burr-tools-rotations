@@ -6,10 +6,19 @@ project('burrtools', 'cpp', 'c',
 	default_options : [
 	  'c_std=c11',
 	  'build.c_std=c11',
-	  'cpp_std=c++11',
-	  'build.cpp_std=c++11',
+	  'cpp_std=c++20',
+	  'build.cpp_std=c++20',
 	  'optimization=2',
 	  'debug=true',
+	  'werror=false',
+	  # -Wall -Wextra for our own code.
+	  'warning_level=2',
+	  # ...but not for FLTK. cmake.subproject() does not hand the build off to
+	  # CMake; it translates the CMake project into meson targets, which are then
+	  # compiled by meson under our options. Without this override, FLTK's own
+	  # sources build at -Wextra and bury our diagnostics under ~1200 lines of
+	  # third-party noise. Catch2 is clean at level 2 and needs no override.
+	  'fltk:warning_level=0',
 	]
        )
 
@@ -18,12 +27,20 @@ if host_machine.system() == 'windows'
   add_project_arguments('-DWIN32', language: ['c', 'cpp'])
 endif
 
-# Set macOS deployment target for compatibility with older macOS versions
+# Set macOS deployment target for compatibility with older macOS versions.
+# Minimum macOS version 11.0 (Big Sur) for broader compatibility while still
+# supporting modern features.
+#
+# These are global rather than project arguments deliberately: meson subprojects
+# (catch2, libpng on macOS/Windows, and zlib on Windows) do not inherit add_project_arguments, so
+# with those their objects get built for the host's macOS version and linked into
+# a binary declaring an older minimum. The CMake subproject (fltk) inherits
+# neither and is handled separately, where it is configured below.
+macos_deployment_target = '11.0'
+
 if host_machine.system() == 'darwin'
-  # Set minimum macOS version to 11.0 (Big Sur) for broader compatibility
-  # while still supporting modern features
-  add_project_arguments('-mmacosx-version-min=11.0', language: ['c', 'cpp', 'objcpp'])
-  add_project_link_arguments('-mmacosx-version-min=11.0', language: ['c', 'cpp', 'objcpp'])
+  add_global_arguments('-mmacosx-version-min=' + macos_deployment_target, language: ['c', 'cpp', 'objcpp'])
+  add_global_link_arguments('-mmacosx-version-min=' + macos_deployment_target, language: ['c', 'cpp', 'objcpp'])
 endif
 
 lua_src = [
@@ -71,6 +88,8 @@ libburr_src = [
   'src/lib/assembler_0.cpp',
   'src/lib/assembler_1.cpp',
   'src/lib/assembler_bt2.cpp',
+  'src/lib/simd_exact_cover.cpp',
+  'src/lib/simd_huang_cover.cpp',
   'src/lib/bt2_dancingcells.cpp',
   'src/lib/assembly.cpp',
   'src/lib/bt_assert.cpp',
@@ -84,6 +103,9 @@ libburr_src = [
   'src/lib/disassemblerhashes.cpp',
   'src/lib/disassemblernode.cpp',
   'src/lib/disassembly.cpp',
+  'src/lib/cubemesh.cpp',
+  'src/lib/cubepoly.cpp',
+  'src/lib/minkmesh.cpp',
   'src/lib/disasmtomoves.cpp',
   'src/lib/gridtype.cpp',
   'src/lib/grouping.cpp',
@@ -145,11 +167,13 @@ gui_src = [
   'src/gui/image.cpp',
   'src/gui/imageexport.cpp',
   'src/gui/main.cpp',
+  'src/gui/mainmenu.cpp',
   'src/gui/mainwindow.cpp',
   'src/gui/movementbrowser.cpp',
   'src/gui/multilinewindow.cpp',
   'src/gui/piececolor.cpp',
   'src/gui/placementbrowser.cpp',
+  'src/gui/platform.cpp',
   'src/gui/resultviewer.cpp',
   'src/gui/separator.cpp',
   'src/gui/shapehistory.cpp',
@@ -168,17 +192,22 @@ gui_src = [
   'src/gui/Fl_Table.cpp',
   'src/gui/LFl_Tile.cpp',
   'src/gui/Layouter.cpp',
-  'src/gui/tr.c',
-  'src/gui/gl2ps.c',
   'src/gui/Images.cpp',
 ]
 
-help_src = [
-  'src/help/Fl_Help_Dialog.cpp',
-  'src/help/Fl_Help_View.cpp',
-  'src/help/helpdata.cpp'
+# Vendored third-party C sources, built separately so that their warnings can be
+# relaxed without relaxing them for our own code. gl2ps.c in particular warns
+# under -Wimplicit-const-int-float-conversion at a spot the upstream author
+# already marked with a FIXME; patching vendored source would only be undone by
+# the next import.
+#   tr.c    - Brian Paul's tile rendering library
+#   gl2ps.c - GL2PS, (C) 1999-2009 C. Geuzaine
+vendored_gui_src = [
+  'src/gui/tr.c',
+  'src/gui/gl2ps.c',
 ]
 
+cc = meson.get_compiler('c')
 cxx = meson.get_compiler('cpp')
 
 # macOS specific dependencies
@@ -209,7 +238,7 @@ if host_machine.system() == 'windows'
 elif host_machine.system() == 'darwin'
   # On macOS, glu_dep is already set to gl_dep above (OpenGL framework includes GLU)
   zlib_dep = dependency('zlib', fallback : ['zlib', 'zlib_dep'])
-  libpng_dep = dependency('libpng')
+  libpng_dep = subproject('libpng', default_options: ['default_library=static']).get_variable('libpng_dep')
 else
   zlib_dep = dependency('zlib', fallback : ['zlib', 'zlib_dep'])
   glu_dep = dependency('glu')
@@ -232,6 +261,7 @@ if not fltk_dep.found()
   
   # Configure CMake to skip test programs that require fluid
   cmake_opts = cmake.subproject_options()
+  cmake_opts.set_override_option('werror', 'false')
   cmake_opts.add_cmake_defines({
     'FLTK_BUILD_TEST': 'OFF',
     'FLTK_BUILD_EXAMPLES': 'OFF',
@@ -245,6 +275,17 @@ if not fltk_dep.found()
     })
   endif
   
+  # FLTK is a CMake subproject and so inherits neither the global nor the project
+  # arguments that carry the deployment target. Without this, libfltk.a objects
+  # are built for the host's macOS version and linking them into a binary that
+  # declares an older minimum produces "built for newer macOS version" warnings -
+  # and a binary that claims a compatibility it does not have.
+  if host_machine.system() == 'darwin'
+    cmake_opts.add_cmake_defines({
+      'CMAKE_OSX_DEPLOYMENT_TARGET': macos_deployment_target
+    })
+  endif
+
   if host_machine.system() == 'windows'
     gdiplus_dep = cxx.find_library('gdiplus')
 
@@ -264,7 +305,7 @@ if not fltk_dep.found()
   fltk_dep = fltk_proj.dependency('fltk')
   fltkgl_dep = fltk_proj.dependency('fltk_gl')
   fltkimages_dep = fltk_proj.dependency('fltk_images')
-  
+
   # On Windows, FLTK builds bundled PNG and zlib libraries when we disable system libraries
   # These need to be linked separately
   if host_machine.system() == 'windows'
@@ -293,14 +334,112 @@ endif
 add_project_link_arguments(link_args,
 			   language: ['c', 'cpp', 'objc'])
 
-executable('burrTxt',  tools_src + halfedge_src + libburr_src + ['src/burrTxt.cpp'],
- 	   dependencies: [thread_dep, zlib_dep])
+# Manifold (https://github.com/elalish/manifold): the boolean / Minkowski
+# engine behind the chamfered STL export of the non-cube grids. Built from
+# the wrap as a static library, without its 2D cross-section part (which
+# would pull in Clipper2), its tests or its parallel backend.
+cmake_mf = import('cmake')
+manifold_opts = cmake_mf.subproject_options()
+manifold_opts.add_cmake_defines({
+  'MANIFOLD_CROSS_SECTION': 'OFF',
+  'MANIFOLD_TEST': 'OFF',
+  'MANIFOLD_PAR': 'OFF',
+  'MANIFOLD_PYBIND': 'OFF',
+  'MANIFOLD_DEBUG': 'OFF',
+  'BUILD_SHARED_LIBS': 'OFF',
+  'CMAKE_BUILD_TYPE': 'Release',
+})
+manifold_opts.set_override_option('warning_level', '0')
+manifold_opts.set_override_option('werror', 'false')
+manifold_proj = cmake_mf.subproject('manifold', options: manifold_opts)
+manifold_dep = manifold_proj.dependency('manifold')
 
-executable('burrTxt2',  tools_src + halfedge_src + libburr_src + ['src/burrTxt2.cpp'],
- 	   dependencies: [thread_dep, zlib_dep],
+inc = include_directories('src')
+
+libburr_core = static_library('burr_core',
+  tools_src + halfedge_src + libburr_src,
+  include_directories: inc,
+  dependencies: [thread_dep, zlib_dep, manifold_dep],
+)
+
+executable('burrTxt', ['src/burrTxt.cpp'],
+  include_directories: inc,
+  link_with: libburr_core,
+  dependencies: [thread_dep, zlib_dep, manifold_dep])
+
+executable('burrTxt2', ['src/burrTxt2.cpp'],
+  include_directories: inc,
+  link_with: libburr_core,
+  dependencies: [thread_dep, zlib_dep, manifold_dep])
+
+# get_supported_arguments so these stay a no-op on compilers without the flag
+vendored_gui_lib = static_library('vendored_gui', vendored_gui_src,
+          override_options: ['werror=false'],
+          c_args: cc.get_supported_arguments(
+            # clang
+            '-Wno-implicit-const-int-float-conversion',
+            '-Wno-unused-parameter',
+            # gcc; -Wimplicit-fallthrough is the only one of these that
+            # warning_level=2 introduces, the other is raised at -Wall too
+            '-Wno-implicit-fallthrough',
+            '-Wno-maybe-uninitialized',
+          ),
+          dependencies: [zlib_dep, gl_dep, glu_dep, libpng_dep],
 	  )
 
-executable('burrtools', lua_src + tools_src + gui_src + halfedge_src + libburr_src,
-          dependencies: [thread_dep, zlib_dep, gl_dep, glu_dep, gdiplus_dep, fltk_dep, fltkgl_dep, fltkimages_dep, fltkpng_dep, fltkz_dep, libpng_dep, cocoa_dep],
+vendored_lua_lib = static_library('vendored_lua', lua_src,
+          override_options: ['werror=false'],
+	  )
+
+executable('burrtools', gui_src,
+          include_directories: inc,
+          link_with: [libburr_core, vendored_gui_lib, vendored_lua_lib],
+          dependencies: [manifold_dep, thread_dep, zlib_dep, gl_dep, glu_dep, gdiplus_dep, fltk_dep, fltkgl_dep, fltkimages_dep, fltkpng_dep, fltkz_dep, libpng_dep, cocoa_dep],
           win_subsystem: 'windows',
 	  )
+
+catch2_dep = dependency('catch2-with-main', fallback: ['catch2', 'catch2_with_main_dep'], default_options: ['tests=false'])
+
+test_burrtools = executable('test_burrtools',
+  ['test/test_solver.cpp', 'test/test_cubemesh.cpp', 'test/test_manifold_smoke.cpp', 'test/test_minkmesh.cpp', 'test/test_bitfield.cpp', 'test/test_voxel.cpp', 'test/test_voxel_connect.cpp', 'test/test_symmetries.cpp', 'test/test_grouping.cpp', 'test/test_xml.cpp', 'test/test_roundtrip.cpp', 'test/test_disassembly.cpp', 'test/test_puzzle_model.cpp', 'test/test_grid_invariants.cpp', 'test/test_simd_exact_cover.cpp'],
+  include_directories: inc,
+  link_with: libburr_core,
+  dependencies: [thread_dep, zlib_dep, catch2_dep, manifold_dep],
+)
+
+test('burrtools_tests', test_burrtools, workdir: meson.project_source_root())
+
+python_opt = get_option('python')
+if not python_opt.disabled()
+  if meson.is_cross_build() and python_opt.auto()
+    message('Skipping Python wrapper during cross-compilation with python=auto')
+  else
+    py = import('python').find_installation('python3', required: python_opt)
+    if py.found()
+    pybind11_dep = dependency('pybind11', fallback: ['pybind11', 'pybind11_dep'], required: python_opt)
+    if pybind11_dep.found()
+      python_src = [
+        'src/python/py_shape.cpp',
+        'src/python/py_solution_iterator.cpp',
+        'src/python/py_problem.cpp',
+        'src/python/py_puzzle.cpp',
+        'src/python/module.cpp',
+      ]
+      py.extension_module('burrtools',
+        python_src,
+        include_directories: inc,
+        link_with: libburr_core,
+        dependencies: [pybind11_dep, thread_dep, zlib_dep],
+      )
+
+      test('python_tests',
+        py,
+        args: ['-m', 'unittest', 'discover', '-s', meson.project_source_root() / 'test/python'],
+        env: ['PYTHONPATH=' + meson.current_build_dir()],
+        workdir: meson.project_source_root(),
+      )
+    endif
+  endif
+  endif
+endif
+

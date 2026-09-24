@@ -150,8 +150,7 @@ bool voxel_2_c::transform(unsigned int nr) {
 
   int voxelsn = nsx*nsy*nsz;
 
-  voxel_type *s = new voxel_type[voxelsn];
-  memset(s, VX_EMPTY, voxelsn);
+  std::vector<voxel_type> s(voxelsn, VX_EMPTY);
 
   index = 0;
   for (unsigned int z = 0; z < sz; z++)
@@ -221,8 +220,7 @@ bool voxel_2_c::transform(unsigned int nr) {
   sy = nsy;
   sz = nsz;
 
-  delete [] space;
-  space = s;
+  space = std::move(s);
 
   voxels = voxelsn;
 
@@ -263,6 +261,14 @@ void voxel_2_c::transformPoint(int * x, int * y, int * z, unsigned int trans) co
   *x = (int)floor(xpn+0.5);
   *y = (int)floor(ypn+0.5);
   *z = (int)floor(zpn+0.5);
+}
+
+void voxel_2_c::getTransformMatrix(unsigned int trans, double m[9]) const {
+
+  bt_assert(trans < NUM_TRANSFORMATIONS_MIRROR);
+
+  for (int i = 0; i < 9; i++)
+    m[i] = rotationMatrices[trans][i];
 }
 
 bool voxel_2_c::getNeighbor(unsigned int idx, unsigned int typ, int x, int y, int z, int * xn, int *yn, int *zn) const {

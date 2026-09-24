@@ -28,98 +28,49 @@
 
 /* the hash function. I don't know how well it performs, but it seems to be okay */
 static unsigned int moHashValue(unsigned int s1, unsigned int s2, int dx, int dy, int dz, unsigned char t1, unsigned char t2) {
-  unsigned int val = dx * 0x10101010;
-  val +=             dy * 0x14814814;
-  val +=             dz * 0x95145951;
-  val +=             t1 * 0x1A54941A;
-  val +=             t2 * 0x5AA59401;
-  val +=             s1 * 0x01059a04;
-  val +=             s2 * 0x9af42682;
+  /* unsigned constants so the multiplications are done in unsigned
+   * arithmetic; with signed int operands dx/dy/dz these products overflowed,
+   * which is undefined behaviour. The computed hash is unchanged: two's
+   * complement +/- and * agree with unsigned arithmetic modulo 2^32.
+   */
+  unsigned int val = dx * 0x10101010u;
+  val +=             dy * 0x14814814u;
+  val +=             dz * 0x95145951u;
+  val +=             t1 * 0x1A54941Au;
+  val +=             t2 * 0x5AA59401u;
+  val +=             s1 * 0x01059a04u;
+  val +=             s2 * 0x9af42682u;
   return val;
 }
 
-/* double the hash table size and copy the old elements into
- * the new table
- */
-void movementCache_c::moRehash(void) {
-  unsigned int oldSize = moTableSize;
-
-  /* the new size, roughly twice the old size but odd */
-  moTableSize = 2*moTableSize + 1;
-
-  /* allocate new table */
-  moEntry ** newHash = new moEntry * [moTableSize];
-  memset(newHash, 0, moTableSize * sizeof(moEntry*));
-
-  /* copy the elements */
-  for (unsigned int i = 0; i < oldSize; i++) {
-
-    while (moHash[i]) {
-
-      /* remove from old table */
-      moEntry * e = moHash[i];
-      moHash[i] = e->next;
-
-      /* enter into new one */
-      unsigned int h = moHashValue(e->s1, e->s2, e->dx, e->dy, e->dz, e->t1, e->t2) % moTableSize;
-      e->next = newHash[h];
-      newHash[h] = e;
-    }
-  }
-
-  /* delete the old table and make the new table the current one */
-  delete [] moHash;
-  moHash = newHash;
+size_t movementCache_c::moKeyHash::operator()(const moKey & k) const noexcept {
+  return moHashValue(k.s1, k.s2, k.dx, k.dy, k.dz, k.t1, k.t2);
 }
 
-movementCache_c::movementCache_c(const problem_c & puzzle) : gt(puzzle.getPuzzle().getGridType()) {
-
-  /* initial table */
-  moTableSize = 101;
-  moHash = new moEntry * [moTableSize];
-  memset(moHash, 0, moTableSize * sizeof(moEntry*));
-  moEntries = 0;
+movementCache_c::movementCache_c(const problem_c & puzzle)
+  : shapes(puzzle.getNumberOfParts(), std::vector<const voxel_c*>(puzzle.getPuzzle().getGridType()->getSymmetries()->getNumTransformations(), nullptr)),
+    pieces(puzzle.getNumberOfPieces()),
+    num_shapes(puzzle.getNumberOfParts()),
+    num_transformations(puzzle.getPuzzle().getGridType()->getSymmetries()->getNumTransformations()),
+    gt(puzzle.getPuzzle().getGridType()) {
 
   /* Initialise the shape array with the shapes from the
    * puzzle problem. The shape with transformation 0 is just
    * a pointer into the puzzle, so don't delete them later on
    */
-  num_shapes = puzzle.getNumberOfParts();
-
-  num_transformations = puzzle.getPuzzle().getGridType()->getSymmetries()->getNumTransformations();
-
-  shapes = new const voxel_c ** [num_shapes];
   for (unsigned int s = 0; s < num_shapes; s++) {
-    shapes[s] = new const voxel_c * [num_transformations];
-    memset(shapes[s], 0, num_transformations * sizeof(voxel_c*));
     shapes[s][0] = puzzle.getPartShape(s);
   }
 
   /* Initialise the piece array */
-  pieces = new unsigned int [puzzle.getNumberOfPieces()];
-
   int pos = 0;
 
   for (unsigned int s = 0; s < puzzle.getNumberOfParts(); s++)
     for (unsigned int i = 0; i < puzzle.getPartMaximum(s); i++)
       pieces[pos++] = s;
-
 }
 
 movementCache_c::~movementCache_c() {
-
-  /* delete the hash nodes */
-  for (unsigned int i = 0; i < moTableSize; i++) {
-
-    while (moHash[i]) {
-      moEntry * e = moHash[i];
-      moHash[i] = e->next;
-
-      delete [] e->move;
-      delete e;
-    }
-  }
-  delete [] moHash;
 
   /* the shape with transformation 0 is just
    * a pointer into the puzzle, so don't delete them
@@ -130,11 +81,7 @@ movementCache_c::~movementCache_c() {
     for (unsigned int t = 1; t < num_transformations; t++)
       if (shapes[s][t])
         delete shapes[s][t];
-    delete [] shapes[s];
   }
-
-  delete [] shapes;
-  delete [] pieces;
 }
 
 const voxel_c * movementCache_c::getTransformedShape(unsigned int s, unsigned char t) {
@@ -159,31 +106,15 @@ void movementCache_c::getMoValue(int dx, int dy, int dz, unsigned char t1, unsig
   unsigned int s1 = pieces[p1];
   unsigned int s2 = pieces[p2];
 
-  unsigned int h = moHashValue(s1, s2, dx, dy, dz, t1, t2);
+  moKey key{s1, s2, dx, dy, dz, t1, t2};
 
-  moEntry * e = moHash[h % moTableSize];
-
-  /* check the list of nodes in the current hash bucket */
-  while (e && (e->dx != dx || e->dy != dy || e->dz != dz ||
-               e->t1 != t1 || e->t2 != t2 || e->s1 != s1 || e->s2 != s2))
-    e = e->next;
-
-  /* check, if we found the required node */
-  if (!e)
+  auto it = moCache.find(key);
+  if (it == moCache.end())
   {
-    /* no is not found, enter a new node into the table */
-    e = new moEntry;
-    e->dx = dx; e->dy = dy; e->dz = dz;
-    e->t1 = t1; e->t2 = t2;
-    e->s1 = s1; e->s2 = s2;
-    e->move = moCalcValues(getTransformedShape(s1, t1), getTransformedShape(s2, t2), dx, dy, dz);
-
-    if (++moEntries > moTableSize) moRehash();
-
-    e->next = moHash[h % moTableSize];
-    moHash[h % moTableSize] = e;
+    /* key not found, calculate and enter a new node into the table */
+    it = moCache.emplace(key, moCalcValues(getTransformedShape(s1, t1), getTransformedShape(s2, t2), dx, dy, dz)).first;
   }
 
   /* return the values */
-  memcpy(movements, e->move, numDirections()*sizeof(unsigned int));
+  memcpy(movements, it->second.data(), numDirections()*sizeof(unsigned int));
 }

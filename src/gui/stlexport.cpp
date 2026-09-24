@@ -19,6 +19,10 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 #include "stlexport.h"
+#include "filechooser.h"
+
+#include "../tools/homedir.h"
+#include <filesystem>
 #include <stdlib.h>
 
 #include "BlockList.h"
@@ -42,7 +46,7 @@
 #define GL_SILENCE_DEPRECATION 1
 #include <FL/Fl.H>
 #include <FL/fl_ask.H>
-#include "filechooser.h"
+#include <FL/Fl_File_Chooser.H>
 
 #pragma GCC diagnostic pop
 
@@ -71,7 +75,7 @@ void stlExport_c::cb_Export(void) {
 
 }
 
-static void updateParameters(stlExporter_c * stl, const std::vector<inputField_c *> & params)
+static void updateParameters(stlExporter_c * stl, const std::vector<std::unique_ptr<inputField_c>> & params)
 {
   for (unsigned int i = 0; i < stl->numParameters(); i++)
   {
@@ -79,13 +83,13 @@ static void updateParameters(stlExporter_c * stl, const std::vector<inputField_c
     {
       case stlExporter_c::PAR_TYP_DOUBLE:
       case stlExporter_c::PAR_TYP_POS_DOUBLE:
-        stl->setParameter(i, atof(((LFl_Float_Input*)(params[i]->w))->value()));
+        stl->setParameter(i, atof(static_cast<LFl_Float_Input*>(params[i]->w)->value()));
         break;
       case stlExporter_c::PAR_TYP_POS_INTEGER:
-        stl->setParameter(i, atoi(((LFl_Int_Input*)(params[i]->w))->value()));
+        stl->setParameter(i, atoi(static_cast<LFl_Int_Input*>(params[i]->w)->value()));
         break;
       case stlExporter_c::PAR_TYP_SWITCH:
-        stl->setParameter(i, ((LFl_Check_Button*)(params[i]->w))->value());
+        stl->setParameter(i, static_cast<LFl_Check_Button*>(params[i]->w)->value());
         break;
       default:
         bt_assert(0);
@@ -93,29 +97,26 @@ static void updateParameters(stlExporter_c * stl, const std::vector<inputField_c
   }
 }
 
-static void cb_stlExport3DUpdate_stub(Fl_Widget* /*o*/, void* v) { ((stlExport_c*)(v))->cb_Update3DView(1); }
-static void cb_stlExport3DUpdate2_stub(Fl_Widget* /*o*/, void* v) { ((stlExport_c*)(v))->cb_Update3DView(2); }
-void stlExport_c::cb_Update3DView(int type)
+static void cb_stlExport3DUpdate_stub(Fl_Widget* /*o*/, void* v) { ((stlExport_c*)(v))->cb_Update3DView(); }
+void stlExport_c::cb_Update3DView(void)
 {
-  updateParameters(stl, params);
-
-  if (type == 2)
-  {
-    holes.clear();
-  }
+  updateParameters(stl.get(), params);
 
   Polyhedron * p = 0;
   try
   {
-    p = stl->getMesh(*puzzle->getShape(ShapeSelect->getSelection()), holes);
+    p = stl->getMesh(*puzzle->getShape(ShapeSelect->getSelection()));
   }
   catch (stlException_c e)
   {
+    /* nothing to show: the preview must not keep the last mesh */
+    view3D->getView()->showNothing();
     fl_message("%s",e.comment);
     return;
   }
   catch (...)
   {
+    view3D->getView()->showNothing();
     fl_message("The generated mesh is faulty in some way, try to tweak the parameter");
     return;
   }
@@ -182,40 +183,23 @@ void stlExport_c::cb_Update3DViewParams(void)
   }
 }
 
-static void cb_3dClick_stub(Fl_Widget* /*o*/, void* v) { ((stlExport_c*)v)->cb_3dClick(); }
-void stlExport_c::cb_3dClick(void)
-{
-  if (Fl::event_ctrl() || Fl::event_shift())
-  {
-    unsigned int shape, face;
-    unsigned long voxel;
+stlExport_c::stlExport_c(puzzle_c * p, const std::string & puzzleFile) : LFl_Double_Window(true), puzzle(p), exportDir(std::filesystem::path(puzzleFile).parent_path().string()) {
 
-    if (view3D->getView()->pickShape(Fl::event_x(),
-        view3D->getView()->h()-Fl::event_y(),
-        &shape, &voxel, &face))
-    {
-      if (shape == 0)
-      {
-        if (Fl::event_ctrl())
-        {
-          holes.removeFace(voxel, face);
-          cb_Update3DView(1);
-        }
-        if (Fl::event_shift())
-        {
-          holes.addFace(voxel, face);
-          cb_Update3DView(1);
-        }
-      }
-    }
-  }
-}
-
-stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
+  /* The path field starts at the folder the puzzle was loaded from, which is
+   * where the user almost always wants the mesh. An unsaved puzzle has no
+   * folder, so the home directory stands in: it exists and is writable,
+   * neither of which holds for the working directory -- an application
+   * launched from a macOS bundle or a Windows shortcut is given "/".
+   *
+   * homedir() ends in a separator, so it goes through parent_path() as well,
+   * leaving both branches in the same shape.
+   */
+  if (exportDir.empty())
+    exportDir = std::filesystem::path(homedir()).parent_path().string();
 
   label("Export STL");
 
-  stl = p->getGridType()->getStlExporter();
+  stl = std::unique_ptr<stlExporter_c>(p->getGridType()->getStlExporter());
   bt_assert(stl);
 
   LFl_Frame *fr;
@@ -234,7 +218,7 @@ stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
     Fname->weight(1, 0);
     Fname->setMinimumSize(50, 0);
     Pname = new LFl_Input(2, 1, 1, 1);
-    Pname->value(".");
+    Pname->value(exportDir.c_str());
     Pname->weight(1, 0);
     Pname->setMinimumSize(50, 0);
 
@@ -253,11 +237,9 @@ stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
   {
     fr = new LFl_Frame(0, 1, 1, 1);
 
-    inputField_c * inp;
-
     for (unsigned int i = 0; i < stl->numParameters(); i++)
     {
-      inp = new inputField_c;
+      auto inp = std::make_unique<inputField_c>();
 
       inp->type = stl->getParameterType(i);
 
@@ -329,7 +311,7 @@ stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
       inp->w->callback(cb_stlExport3DUpdate_stub, this);
       inp->w->tooltip(stl->getParameterTooltip(i));
 
-      params.push_back(inp);
+      params.push_back(std::move(inp));
     }
 
     fr->end();
@@ -341,7 +323,7 @@ stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
     ShapeSelect->setSelection(0);
 
     LBlockListGroup_c * gr = new LBlockListGroup_c(0, 2, 1, 1, ShapeSelect);
-    gr->callback(cb_stlExport3DUpdate2_stub, this);
+    gr->callback(cb_stlExport3DUpdate_stub, this);
     gr->setMinimumSize(200, 100);
     gr->stretch();
     gr->weight(0, 1);
@@ -392,8 +374,7 @@ stlExport_c::stlExport_c(puzzle_c * p) : LFl_Double_Window(true), puzzle(p) {
   view3D = new LView3dGroup(1, 0, 1, 4);
   view3D->setMinimumSize(400, 400);
   view3D->weight(1, 0);
-  view3D->callback(cb_3dClick_stub, this);
-  cb_Update3DView(1);
+  cb_Update3DView();
 
   set_modal();
 }
@@ -404,7 +385,7 @@ void stlExport_c::exportSTL(int shape)
 
   voxel_c *v = puzzle->getShape(shape);
 
-  updateParameters(stl, params);
+  updateParameters(stl.get(), params);
 
   stl->setBinaryMode(Binary->value() != 0);
 
@@ -414,6 +395,7 @@ void stlExport_c::exportSTL(int shape)
       snprintf(name, 1000, "%s%s", Pname->value(), Fname->value());
   }
 
+  // Native save dialogs already confirm overwrite; still ask for a typed path.
   if (fileExists(name))
   {
     if (fl_choice("File exists overwrite?", "Cancel", "Overwrite", 0) == 0)
@@ -423,7 +405,7 @@ void stlExport_c::exportSTL(int shape)
   }
 
   try {
-    stl->write(name, *v, holes);
+    stl->write(name, *v);
   }
 
   catch (stlException_c e) {
@@ -435,9 +417,4 @@ void stlExport_c::exportSTL(int shape)
   }
 }
 
-stlExport_c::~stlExport_c(void)
-{
-  if (stl) delete stl;
-  for (size_t i = 0; i < params.size(); i++)
-    delete params[i];
-}
+stlExport_c::~stlExport_c(void) = default;

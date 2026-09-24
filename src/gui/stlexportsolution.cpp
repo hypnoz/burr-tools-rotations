@@ -58,19 +58,19 @@ namespace stlExportSolutionImpl {
   };
 
   static void applyParams(stlExporter_c * stl,
-                          const std::vector<Param*> & params)
+                          const std::vector<std::unique_ptr<Param>> & params)
   {
     for (unsigned int i = 0; i < stl->numParameters(); i++) {
       switch (params[i]->type) {
         case stlExporter_c::PAR_TYP_DOUBLE:
         case stlExporter_c::PAR_TYP_POS_DOUBLE:
-          stl->setParameter(i, atof(((LFl_Float_Input*)(params[i]->w))->value()));
+          stl->setParameter(i, atof(static_cast<LFl_Float_Input*>(params[i]->w)->value()));
           break;
         case stlExporter_c::PAR_TYP_POS_INTEGER:
-          stl->setParameter(i, atoi(((LFl_Int_Input*)(params[i]->w))->value()));
+          stl->setParameter(i, atoi(static_cast<LFl_Int_Input*>(params[i]->w)->value()));
           break;
         case stlExporter_c::PAR_TYP_SWITCH:
-          stl->setParameter(i, ((LFl_Check_Button*)(params[i]->w))->value());
+          stl->setParameter(i, static_cast<LFl_Check_Button*>(params[i]->w)->value());
           break;
         default:
           bt_assert(0);
@@ -98,6 +98,7 @@ namespace stlExportSolutionImpl {
       const problem_c * pr, unsigned int sol)
   {
     std::map<unsigned int, unsigned int> counts;
+    if (!pr) return counts;
     const solution_c * sav = pr->getSavedSolution(sol);
     if (!sav) return counts;
     const assembly_c * assm = sav->getAssembly();
@@ -144,7 +145,7 @@ void stlExportSolution_c::cb_FileChooser(void)
 
 void stlExportSolution_c::cb_Export(void)
 {
-  applyParams(stl, params);
+  applyParams(stl.get(), params);
   stl->setBinaryMode(Binary->value() != 0);
 
   problem_c * pr = puzzle->getProblem(prob);
@@ -154,8 +155,8 @@ void stlExportSolution_c::cb_Export(void)
 
   /* build list of (shapeId, count, path) for pieces actually placed in
    * the selected solution's assembly                                    */
-  struct Entry { unsigned int shapeId; unsigned int count; std::string fname; };
-  std::vector<Entry> entries;
+  struct SolPieceEntry { unsigned int shapeId = 0; unsigned int count = 0; std::string fname; };
+  std::vector<SolPieceEntry> entries;
 
   std::map<unsigned int, unsigned int> placed = placedShapeCounts(pr, sol);
   for (std::map<unsigned int, unsigned int>::const_iterator it = placed.begin();
@@ -177,7 +178,7 @@ void stlExportSolution_c::cb_Export(void)
     else
       snprintf(pathbuf, 1200, "%s%s.stl",  folder, safeName(raw).c_str());
 
-    Entry e;
+    SolPieceEntry e;
     e.shapeId = shapeId;
     e.count   = count;
     e.fname   = pathbuf;
@@ -203,12 +204,11 @@ void stlExportSolution_c::cb_Export(void)
 
   /* export */
   int exported = 0, errors = 0;
-  faceList_c holes; /* empty — batch export has no manually-marked holes */
 
   for (size_t i = 0; i < entries.size(); i++) {
     voxel_c * v = puzzle->getShape(entries[i].shapeId);
     try {
-      stl->write(entries[i].fname.c_str(), *v, holes);
+      stl->write(entries[i].fname.c_str(), *v);
       exported++;
     } catch (stlException_c e) {
       fl_message("Error exporting %s:\n%s", entries[i].fname.c_str(), e.comment);
@@ -236,7 +236,7 @@ stlExportSolution_c::stlExportSolution_c(puzzle_c * p,
 {
   label("Export Solution Pieces to STL");
 
-  stl = p->getGridType()->getStlExporter();
+  stl = std::unique_ptr<stlExporter_c>(p->getGridType()->getStlExporter());
   bt_assert(stl);
 
   /* --- STL parameters frame (row 0) --- */
@@ -244,7 +244,7 @@ stlExportSolution_c::stlExportSolution_c(puzzle_c * p,
     LFl_Frame * fr = new LFl_Frame(0, 0, 1, 1);
 
     for (unsigned int i = 0; i < stl->numParameters(); i++) {
-      Param * inp = new Param;
+      auto inp = std::make_unique<Param>();
       inp->type = stl->getParameterType(i);
 
       switch (inp->type) {
@@ -278,7 +278,7 @@ stlExportSolution_c::stlExportSolution_c(puzzle_c * p,
           bt_assert(0);
       }
       inp->w->tooltip(stl->getParameterTooltip(i));
-      params.push_back(inp);
+      params.push_back(std::move(inp));
     }
 
     fr->end();
@@ -380,9 +380,4 @@ stlExportSolution_c::stlExportSolution_c(puzzle_c * p,
 
 /* ---------- destructor ------------------------------------------------- */
 
-stlExportSolution_c::~stlExportSolution_c(void)
-{
-  if (stl) delete stl;
-  for (size_t i = 0; i < params.size(); i++)
-    delete params[i];
-}
+stlExportSolution_c::~stlExportSolution_c(void) = default;

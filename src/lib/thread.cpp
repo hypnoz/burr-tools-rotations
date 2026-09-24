@@ -32,7 +32,6 @@ void thread_c::joinThread(void) {
 }
 
 thread_c::~thread_c(void) {
-  stop();
   joinThread();
 }
 

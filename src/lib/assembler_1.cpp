@@ -26,16 +26,23 @@
 #include "voxel.h"
 #include "assembly.h"
 #include "gridtype.h"
+#include "simd_huang_cover.h"
 
 #include "../tools/xml.h"
 
 #include <cstdlib>
+#include <cstring>
+#include <unordered_map>
+#include <vector>
+#include <thread>
+#include <exception>
+#include <unordered_set>
 
 #ifdef _WIN32
 #define snprintf _snprintf
 #endif
 
-#define ASSEMBLER_VERSION "2.0"
+#define ASSEMBLER_VERSION "2.1"
 
 void printMatrix(
     const std::vector<unsigned int> & up,
@@ -56,20 +63,20 @@ void printMatrix(
     unsigned int c = right[0];
     while (c) {
 
-      if (left[right[c]] != c) printf("lr %i\n", c);
-      if (right[left[c]] != c) printf("rl %i\n", c);
-      if (up[down[c]] != c) printf("ud %i\n", c);
-      if (down[up[c]] != c) printf("du %i\n", c);
+      if (left[right[c]] != c) printf("lr %u\n", c);
+      if (right[left[c]] != c) printf("rl %u\n", c);
+      if (up[down[c]] != c) printf("ud %u\n", c);
+      if (down[up[c]] != c) printf("du %u\n", c);
       cnt++;
 
       unsigned int r = down[c];
 
       while (r != c) {
 
-        if (left[right[r]] != r) printf("lr %i\n", r);
-        if (right[left[r]] != r) printf("rl %i\n", r);
-        if (up[down[r]] != r) printf("ud %i\n", r);
-        if (down[up[r]] != r) printf("du %i\n", r);
+        if (left[right[r]] != r) printf("lr %u\n", r);
+        if (right[left[r]] != r) printf("rl %u\n", r);
+        if (up[down[r]] != r) printf("ud %u\n", r);
+        if (down[up[r]] != r) printf("du %u\n", r);
         cnt++;
 
         r = down[r];
@@ -79,7 +86,7 @@ void printMatrix(
       c = right[c];
     }
 
-    printf("checked %li nodes for consistency\n", cnt);
+    printf("checked %lu nodes for consistency\n", cnt);
   }
 
   /* first find all the columns */
@@ -96,16 +103,16 @@ void printMatrix(
 
   printf("\n");
 
-  for (unsigned int i = 0; i < columns.size(); i++) if (columns[i] > 100) printf("%i", columns[i] / 100); else printf(" ");
+  for (unsigned int i = 0; i < columns.size(); i++) if (columns[i] > 100) printf("%u", columns[i] / 100); else printf(" ");
   printf("\n");
-  for (unsigned int i = 0; i < columns.size(); i++) if (columns[i] > 10)  printf("%i", (columns[i] / 10)%10); else printf(" ");
+  for (unsigned int i = 0; i < columns.size(); i++) if (columns[i] > 10)  printf("%u", (columns[i] / 10)%10); else printf(" ");
   printf("\n");
-  for (unsigned int i = 0; i < columns.size(); i++) printf("%i", columns[i] % 10);
+  for (unsigned int i = 0; i < columns.size(); i++) printf("%u", columns[i] % 10);
   printf("\n");
 
-  for (unsigned int i = 0; i < columns.size(); i++) printf("%i", min[columns[i]]);
+  for (unsigned int i = 0; i < columns.size(); i++) printf("%u", min[columns[i]]);
   printf("\n");
-  for (unsigned int i = 0; i < columns.size(); i++) printf("%i", max[columns[i]]);
+  for (unsigned int i = 0; i < columns.size(); i++) printf("%u", max[columns[i]]);
   printf("\n");
 
   std::vector<unsigned int> rows;
@@ -265,7 +272,7 @@ void assembler_1_c::AddRangeNode(unsigned int col, unsigned int piecenode, unsig
 assembler_1_c::assembler_1_c(const problem_c & prob) :
   assembler_c(),
   problem(prob),
-  avoidTransformedAssemblies(0), rotationFilterActive(0), avoidTransformedMirror(0),
+  avoidTransformedAssemblies(false), rotationFilterActive(false), avoidTransformedMirror(nullptr),
   iterations(0),
   reducePiece(0)
 {
@@ -273,9 +280,7 @@ assembler_1_c::assembler_1_c(const problem_c & prob) :
   task_stack.push_back(0);
 }
 
-assembler_1_c::~assembler_1_c() {
-  if (avoidTransformedMirror) delete avoidTransformedMirror;
-}
+assembler_1_c::~assembler_1_c() = default;
 
 /* add a piece to the cache, but only if it is not already there. If it is added return the
  * piece pointer otherwise return null
@@ -308,8 +313,11 @@ bool assembler_1_c::canPlace(const voxel_c * piece, int x, int y, int z) const {
             ((piece->getState(px, py, pz) == voxel_c::VX_FILLED) &&
              (result->getState(x+px, y+py, z+pz) == voxel_c::VX_EMPTY)) ||
 
-            // the piece can also not be placed when the colour constraints don't fit
-            !problem.placementAllowed(piece->getColor(px, py, pz), result->getColor(x+px, y+py, z+pz))
+            // the piece can also not be placed when the colour constraints don't fit.
+            // An empty neutral cell carries no colour constraint.
+            ((piece->getState(px, py, pz) == voxel_c::VX_FILLED ||
+              piece->getColor(px, py, pz) != 0) &&
+             !problem.placementAllowed(piece->getColor(px, py, pz), result->getColor(x+px, y+py, z+pz), strictColorRestrictions))
 
            )
           return false;
@@ -341,7 +349,7 @@ bool assembler_1_c::canPlace(const voxel_c * piece, int x, int y, int z) const {
 int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int rangeMax) {
 
   if (hasRange) {
-    fprintf(stderr, "range optimisation used min %i, max %i\n", rangeMin, rangeMax);
+    fprintf(stderr, "range optimisation used min %u, max %u\n", rangeMin, rangeMax);
   }
 
   const voxel_c * result = getResultShape(problem);
@@ -359,7 +367,7 @@ int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int ra
    * with this lookup I was able to reduce the preparation time
    * from 5 to 0.5 seconds for TheLostDay puzzle
    */
-  unsigned int * columns = new unsigned int[result->getXYZ()];
+  std::vector<unsigned int> columns(result->getXYZ());
 
   // only used, when hasRange is true, so we need to initialise it to get rid of warnings
   // the variable contains the column number where the range checks are done
@@ -457,7 +465,7 @@ int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int ra
         symBreakerPiece = 0xFFFFFFFF;
       }
 
-      checkForTransformedAssemblies(symBreakerPiece, 0);
+      checkForTransformedAssemblies(symBreakerPiece, nullptr);
     }
 
     if (sym->symmetryContainsMirror(resultSym)) {
@@ -479,7 +487,7 @@ int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int ra
         unsigned int trans;
       } mm;
 
-      mm * mirror = new mm[problem.getNumberOfPieces()];
+      std::vector<mm> mirror(problem.getNumberOfPieces());
 
       // first initialize
       for (unsigned int i = 0; i < problem.getNumberOfParts(); i++)
@@ -544,16 +552,14 @@ int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int ra
          * we also need to that when ranges are used because the final solution
          * might use only mirrorable pieces and then we need this information
          */
-        mirrorInfo_c * mir = new mirrorInfo_c();
+        auto mir = std::make_unique<mirrorInfo_c>();
 
         for (unsigned int i = 0; i < problem.getNumberOfPieces(); i++)
           if (mirror[i].trans != 255)
             mir->addPieces(i, mirror[i].mirror, mirror[i].trans);
 
-        checkForTransformedAssemblies(symBreakerPiece, mir);
+        checkForTransformedAssemblies(symBreakerPiece, std::move(mir));
       }
-
-      delete [] mirror;
     }
   }
 
@@ -565,7 +571,14 @@ int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int ra
    * these voxels are only used once
    */
 
-  voxel_c ** cache = new voxel_c *[sym->getNumTransformationsMirror()];
+  std::vector<voxel_c *> cache(sym->getNumTransformationsMirror(), nullptr);
+
+  placementFinder_c finder(problem, result, strictColorRestrictions);
+  std::vector<long> voxelOffsets;
+  std::vector<int> positions;
+
+  const long rsx = result->getX();
+  const long rsy = result->getY();
 
   /* now we insert one shape after another */
   for (unsigned int pc = 0; pc < problem.getNumberOfParts(); pc++) {
@@ -596,30 +609,30 @@ int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int ra
         continue;
       }
 
-      rotation = addToCache(cache, &cachefill, rotation);
+      rotation = addToCache(cache.data(), &cachefill, rotation);
 
       if (rotation) {
-        for (int x = (int)result->boundX1()-(int)rotation->boundX1(); x <= (int)result->boundX2()-(int)rotation->boundX2(); x++)
-          for (int y = (int)result->boundY1()-(int)rotation->boundY1(); y <= (int)result->boundY2()-(int)rotation->boundY2(); y++)
-            for (int z = (int)result->boundZ1()-(int)rotation->boundZ1(); z <= (int)result->boundZ2()-(int)rotation->boundZ2(); z++)
-              if (canPlace(rotation, x, y, z)) {
+        finder.find(rotation, voxelOffsets, positions);
 
-                int piecenode = AddPieceNode(pc, rot, x+rotation->getHx(), y+rotation->getHy(), z+rotation->getHz());
-                placements++;
+        for (unsigned int pos = 0; pos < positions.size(); pos += 3) {
 
-                /* now add the used cubes of the piece */
-                for (unsigned int pz = rotation->boundZ1(); pz <= rotation->boundZ2(); pz++)
-                  for (unsigned int py = rotation->boundY1(); py <= rotation->boundY2(); py++)
-                    for (unsigned int px = rotation->boundX1(); px <= rotation->boundX2(); px++)
-                      if (rotation->getState(px, py, pz) == voxel_c::VX_FILLED) {
-                        AddVoxelNode(columns[result->getIndex(x+px, y+py, z+pz)], piecenode);
-                      }
+          const int x = positions[pos];
+          const int y = positions[pos+1];
+          const int z = positions[pos+2];
 
-                // if we use the range counting and the piece is using a range, add it to
-                // the column
-                if (hasRange && (min[pc+1] != max[pc+1]))
-                  AddRangeNode(rangeColumn, piecenode, voxels);
-              }
+          int piecenode = AddPieceNode(pc, rot, x+rotation->getHx(), y+rotation->getHy(), z+rotation->getHz());
+          placements++;
+
+          /* now add the used cubes of the piece */
+          const long base = x + rsx * (y + rsy * (long)z);
+          for (unsigned int v = 0; v < voxelOffsets.size(); v++)
+            AddVoxelNode(columns[base + voxelOffsets[v]], piecenode);
+
+          // if we use the range counting and the piece is using a range, add it to
+          // the column
+          if (hasRange && (min[pc+1] != max[pc+1]))
+            AddRangeNode(rangeColumn, piecenode, voxels);
+        }
         /* for the symmetry breaker piece we also add all symmetries of the box */
         if (pc == symBreakerShape)
           for (unsigned int r = 1; r < sym->getNumTransformations(); r++)
@@ -632,7 +645,7 @@ int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int ra
                 continue;
               }
 
-              addToCache(cache, &cachefill, vx);
+              addToCache(cache.data(), &cachefill, vx);
             }
       }
     }
@@ -642,23 +655,19 @@ int assembler_1_c::prepare(bool hasRange, unsigned int rangeMin, unsigned int ra
     /* check, if the current piece has at least one placement */
     if (placements == 0 && problem.getPartMinimum(pc) > 0)
     {
-      delete [] cache;
-      delete [] columns;
       return -problem.getShapeIdOfPart(pc);
     }
   }
 
-  delete [] cache;
-  delete [] columns;
-
   return 1;
 }
 
-assembler_1_c::errState assembler_1_c::createMatrix(bool keepMirror, bool keepRotations, bool comp) {
+assembler_1_c::errState assembler_1_c::createMatrix(bool keepMirror, bool keepRotations, bool comp, bool strictColors) {
 
   bt_assert(problem.resultValid());
 
   complete = comp;
+  strictColorRestrictions = strictColors;
 
   if (!canHandle(problem))
     return ERR_PUZZLE_UNHANDABLE;
@@ -735,9 +744,7 @@ assembler_1_c::errState assembler_1_c::createMatrix(bool keepMirror, bool keepRo
   }
 
   if (keepMirror) {
-    if (avoidTransformedMirror)
-      delete avoidTransformedMirror;
-    avoidTransformedMirror = 0;
+    avoidTransformedMirror.reset();
   }
 
   if (keepRotations)
@@ -751,10 +758,8 @@ void assembler_1_c::applySolutionFilterFlags(bool keepMirror, bool keepRotations
 
   complete = comp;
 
-  if (keepMirror) {
-    delete avoidTransformedMirror;
-    avoidTransformedMirror = 0;
-  }
+  if (keepMirror)
+    avoidTransformedMirror.reset();
 
   if (keepRotations)
     avoidTransformedAssemblies = false;
@@ -780,75 +785,102 @@ void assembler_1_c::remove_column(unsigned int c) {
  */
 unsigned int assembler_1_c::clumpify(void) {
 
-  unsigned int col = right[0];
-  unsigned int removed = 0;
+  /* two columns are identical, and one of them can be removed, when they
+   * have the same min and max values and are contained in exactly the same
+   * placement rows with the same node weights.
+   *
+   * instead of comparing all pairs of columns we compute a signature for
+   * each column (the sequence of (placement row, node weight) pairs, the
+   * down links enumerate the nodes in row order because rows are appended
+   * in increasing order) and group the columns by a hash of that signature.
+   * only columns within the same group are then compared exactly. This
+   * is linear in the number of matrix nodes while the pairwise comparison
+   * was quadratic in the number of columns
+   */
 
-  while (col) {
+  /* the columns in header ring order, the first column of each group of
+   * identical columns is the one that survives, like before */
+  std::vector<unsigned int> cols;
+  for (unsigned int c = right[0]; c; c = right[c])
+    cols.push_back(c);
 
-    /* find all columns that are identical to col
-     */
+  /* all signatures are stored back to back in one vector, per column we
+   * keep the start of its signature within that vector */
+  std::vector<unsigned long> sigData;
+  std::vector<unsigned long> sigStart;
+  std::vector<unsigned long long> sigHash;
 
-    /* this vector will contain all the columns that are not
-     * yet ruled out to be different from col
-     * the vector contains the node index
-     */
-    std::vector<unsigned int>columns;
+  sigStart.reserve(cols.size()+1);
+  sigHash.reserve(cols.size());
 
-    unsigned int c = right[col];
+  for (unsigned int i = 0; i < cols.size(); i++) {
 
-    while (c) {
-      if (min[c] == min[col] && max[c] == max[col])
-        columns.push_back(down[c]);
-      c = right[c];
-    }
+    const unsigned int col = cols[i];
 
-    unsigned int row = down[col];
+    sigStart.push_back(sigData.size());
+
+    unsigned long long h = 14695981039346656037ull;
+    h = (h ^ min[col]) * 1099511628211ull;
+    h = (h ^ max[col]) * 1099511628211ull;
+
     unsigned int line = 0;
 
-    while (row != col) {
+    for (unsigned int row = down[col]; row != col; row = down[row]) {
 
+      /* find the placement row this node belongs to, the nodes come in
+       * increasing order so the line only ever advances */
       while ((line+1 < piecePositions.size()) && (piecePositions[line+1].row <= row))
         line++;
 
-      unsigned int i = 0;
+      sigData.push_back(line);
+      sigData.push_back(weight[row]);
 
-      /* remove all columns that are not in the same
-       * line as the column
-       */
-      while (i < columns.size()) {
-        if ((columns[i] < piecePositions[line].row) ||
-            ((line+1 < piecePositions.size()) && (columns[i] >= piecePositions[line+1].row)) ||
-            (weight[row] != weight[columns[i]])  // also remove row, if weights differ
-           ) {
-          columns.erase(columns.begin()+i);
-        } else
-          i++;
-      }
+      h = (h ^ line) * 1099511628211ull;
+      h = (h ^ (unsigned long long)weight[row]) * 1099511628211ull;
+    }
 
-      if (columns.size() == 0)
+    sigHash.push_back(h);
+  }
+
+  sigStart.push_back(sigData.size());
+
+  /* group by hash, keep the first column of each group, exactly verify
+   * the others against it before removing them */
+  typedef std::unordered_map<unsigned long long, std::vector<unsigned int> > hashMap;
+  hashMap groups;
+
+  unsigned int removed = 0;
+
+  for (unsigned int i = 0; i < cols.size(); i++) {
+
+    std::vector<unsigned int> & group = groups[sigHash[i]];
+
+    bool dup = false;
+
+    for (unsigned int g = 0; g < group.size(); g++) {
+
+      const unsigned int j = group[g];
+
+      if (min[cols[i]] != min[cols[j]] || max[cols[i]] != max[cols[j]])
+        continue;
+
+      const unsigned long leni = sigStart[i+1]-sigStart[i];
+
+      if (leni != sigStart[j+1]-sigStart[j])
+        continue;
+
+      if ((leni == 0) ||
+          (memcmp(&sigData[sigStart[i]], &sigData[sigStart[j]], leni * sizeof(unsigned long)) == 0)) {
+        dup = true;
         break;
-
-      row = down[row];
-
-      for (i = 0; i < columns.size(); i++)
-        columns[i] = down[columns[i]];
+      }
     }
 
-    /* now all the columns need to be in the header again */
-    unsigned int i = 0;
-    while (i < columns.size()) {
-      if (columns[i] >= piecePositions[0].row)
-        columns.erase(columns.begin()+i);
-      else
-        i++;
-    }
-
-    for (unsigned int i = 0; i < columns.size(); i++)
-      remove_column(columns[i]);
-
-    removed += columns.size();
-
-    col = right[col];
+    if (dup) {
+      remove_column(cols[i]);
+      removed++;
+    } else
+      group.push_back(i);
   }
 
   return removed;
@@ -895,11 +927,11 @@ void assembler_1_c::reduce(void) {
    *    column c2 condition so that no other row will come there, so all
    *    rows that are not in the c set but contribute to c2 can be removed
    */
-  unsigned int *columns = new unsigned int[headerNodes];
+  std::vector<unsigned int> columns(headerNodes);
 
   for (unsigned int col = right[0]; col; col = right[col]) {
 
-    if (abort.load(std::memory_order_acquire))
+    if (abbort.load(std::memory_order_acquire))
       break;
 
     // this is taken from the assembler 0 reduce
@@ -907,7 +939,7 @@ void assembler_1_c::reduce(void) {
     // we do it only on columns with min = max = 1
     if (min[col] == 0) continue;
 
-    memset(columns, 0, headerNodes * sizeof(unsigned int));
+    memset(columns.data(), 0, headerNodes * sizeof(unsigned int));
 
     unsigned int placements = 0;
     for (unsigned int r = down[col]; r != col; r = down[r]) {
@@ -951,7 +983,6 @@ void assembler_1_c::reduce(void) {
   }
 
   toRemove.clear();
-  delete [] columns;
 
   col_rem += clumpify();
 
@@ -959,12 +990,12 @@ void assembler_1_c::reduce(void) {
 
   do {
 
-    if (abort.load(std::memory_order_acquire))
+    if (abbort.load(std::memory_order_acquire))
       break;
 
     for (unsigned int pp = 0; pp < piecePositions.size(); pp++) {
 
-      if (abort.load(std::memory_order_acquire))
+      if (abbort.load(std::memory_order_acquire))
         break;
 
       unsigned int row = piecePositions[pp].row;
@@ -1027,22 +1058,22 @@ void assembler_1_c::reduce(void) {
 
   col_rem += clumpify();
 
-  fprintf(stderr, "removed %i rows and %i columns\n", row_rem, col_rem);
+  fprintf(stderr, "removed %u rows and %u columns\n", row_rem, col_rem);
 }
 
-void assembler_1_c::checkForTransformedAssemblies(unsigned int pivot, mirrorInfo_c * mir) {
+void assembler_1_c::checkForTransformedAssemblies(unsigned int pivot, std::unique_ptr<mirrorInfo_c> mir) {
   avoidTransformedAssemblies = true;
   rotationFilterActive = true;
   avoidTransformedPivot = pivot;
-  avoidTransformedMirror = mir;
+  avoidTransformedMirror = std::move(mir);
 }
 
-assembly_c * assembler_1_c::getAssembly(void) {
+std::unique_ptr<assembly_c> assembler_1_c::getAssembly(void) {
 
-  assembly_c * assembly = new assembly_c(problem.getPuzzle().getGridType());
+  auto assembly = std::make_unique<assembly_c>(problem.getPuzzle().getGridType());
 
-  /* fill the array with 0xff, so that we can distinguish between
-   * placed and unplaced pieces
+  /* the placement of each selected row; heap allocated rather than on the
+   * stack because rows.size() grows with the puzzle and has no upper bound
    */
   std::vector<unsigned int> piece(rows.size());
   std::vector<unsigned char> tran(rows.size());
@@ -1080,12 +1111,13 @@ void assembler_1_c::solution(void) {
 
   if (getCallback()) {
 
-    assembly_c * assembly = getAssembly();
+    std::unique_ptr<assembly_c> assembly = getAssembly();
 
-    if (avoidTransformedAssemblies && assembly->smallerRotationExists(problem, avoidTransformedPivot, avoidTransformedMirror, complete))
-      delete assembly;
+    if (avoidTransformedAssemblies && assembly->smallerRotationExists(problem, avoidTransformedPivot, avoidTransformedMirror.get(), complete, strictColorRestrictions))
+      return;
     else {
-      getCallback()->assembly(assembly);
+      if (!getCallback()->assembly(std::move(assembly)))
+        stop();
     }
 
 #if 0
@@ -1374,8 +1406,7 @@ void assembler_1_c::rec(unsigned int next_row) {
   // line to the column that is why we do this check here at the start of the function
   if (column_condition_fulfilled(col)) {
 
-    finished_b.push_back(colCount[colCount[next_row]]+1);
-    finished_a.push_back(0);
+    pushFinished(colCount[colCount[next_row]]+1);
 
     // remove all rows that are left within this column
     // this way we make sure we are _not_ changing this columns value any more
@@ -1393,8 +1424,7 @@ void assembler_1_c::rec(unsigned int next_row) {
 
   } else {
 
-    finished_b.push_back(colCount[colCount[next_row]]);
-    finished_a.push_back(0);
+    pushFinished(colCount[colCount[next_row]]);
 
   }
 
@@ -1485,8 +1515,7 @@ void assembler_1_c::rec(unsigned int next_row) {
   // row by row inspection
   unhiderows();
 
-  finished_a.pop_back();
-  finished_b.pop_back();
+  popFinished();
 }
 
 #endif
@@ -1497,13 +1526,17 @@ void assembler_1_c::iterative(void) {
 
   while (task_stack.size() > 0) {
 
-    iterations++;
+    iterations.store(iterations.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
 
     // wan can only restore the states 1, 2 and 5. Internal states will alway
     // be one of those, but the last state might differ, so continue looping
     // until the final state is 1, 2 or 5
-    if (abort.load(std::memory_order_acquire))
-      break;
+    if (abbort.load(std::memory_order_relaxed)) {
+      if (task_stack.back() == 1 ||
+          task_stack.back() == 2 ||
+          task_stack.back() == 5)
+        break;
+    }
 
     // the debugger
     if (debug) {
@@ -1574,7 +1607,7 @@ void assembler_1_c::iterative(void) {
             break;
           }
 
-          if (debug) fprintf(stderr, "found column %i with count %i\n", col, colCount[col]);
+          if (debug) fprintf(stderr, "found column %i with count %u\n", col, colCount[col]);
 
           // when there are no rows in the selected column, we don't need to find
           // any row set and can continue right on with a new column
@@ -1630,10 +1663,9 @@ void assembler_1_c::iterative(void) {
         // line to the column that is why we do this check here at the start of the function
         if (column_condition_fulfilled(col)) {
 
-          if (debug) fprintf(stderr, "column %i condition fulfilled, recurse\n", col);
+          if (debug) fprintf(stderr, "column %u condition fulfilled, recurse\n", col);
 
-          finished_b.push_back(colCount[colCount[next_row_stack.back()]]+1);
-          finished_a.push_back(0);
+          pushFinished(colCount[colCount[next_row_stack.back()]]+1);
 
           // remove all rows that are left within this column
           // this way we make sure we are _not_ changing this columns value any more
@@ -1651,8 +1683,7 @@ void assembler_1_c::iterative(void) {
 
         } else {
 
-          finished_b.push_back(colCount[colCount[next_row_stack.back()]]);
-          finished_a.push_back(0);
+          pushFinished(colCount[colCount[next_row_stack.back()]]);
         }
 
         task_stack.back() = 3;
@@ -1661,7 +1692,7 @@ void assembler_1_c::iterative(void) {
       case 1:
 
         // reinsert this column
-        if (debug) fprintf(stderr, "reinserting column %i\n", column_stack.back());
+        if (debug) fprintf(stderr, "reinserting column %u\n", column_stack.back());
 
         uncover_column_only(column_stack.back());
 
@@ -1700,7 +1731,7 @@ void assembler_1_c::iterative(void) {
         row = rows.back();
         col = colCount[next_row_stack.back()];
 
-        if (debug) fprintf(stderr, "add row %i for columns %i\n", row, col);
+        if (debug) fprintf(stderr, "add row %u for columns %u\n", row, col);
 
         // add row to rowset
         weight[colCount[row]] += weight[row];
@@ -1723,7 +1754,7 @@ void assembler_1_c::iterative(void) {
               // if the current column condition is really fulfilled
               if (column_condition_fulfilled(col)) {
 
-                if (debug) fprintf(stderr, "recurse because columns %i condition fulfilled\n", col);
+                if (debug) fprintf(stderr, "recurse because columns %u condition fulfilled\n", col);
 
                 task_stack.back() = 5;
                 task_stack.push_back(0);
@@ -1755,7 +1786,7 @@ void assembler_1_c::iterative(void) {
                 break;
               }
 
-              if (debug) fprintf(stderr, "no recurse because columns %i condition fulfillable\n", col);
+              if (debug) fprintf(stderr, "no recurse because columns %u condition fulfillable\n", col);
             }
           }
 
@@ -1779,7 +1810,7 @@ void assembler_1_c::iterative(void) {
         // remove row from rowset
         row = rows.back();
 
-        if (debug) fprintf(stderr, "remove row %i\n", row);
+        if (debug) fprintf(stderr, "remove row %u\n", row);
 
         for (unsigned int r = left[row]; r != row; r = left[r])
           weight[colCount[r]] -= weight[r];
@@ -1810,8 +1841,7 @@ void assembler_1_c::iterative(void) {
         // row by row inspection
         unhiderows();
 
-        finished_a.pop_back();
-        finished_b.pop_back();
+        popFinished();
 
         next_row_stack.pop_back();
         task_stack.pop_back();
@@ -1825,29 +1855,1004 @@ void assembler_1_c::iterative(void) {
   }
 }
 
+class assemblerWorker_1 {
+  assembler_1_c & parent;
+
+  std::vector<unsigned int> left;
+  std::vector<unsigned int> right;
+  std::vector<unsigned int> up;
+  std::vector<unsigned int> down;
+  std::vector<unsigned int> colCount;
+  std::vector<unsigned int> weight;
+
+  /* no private base_* copies here: searchSubtree() re-seeds from
+   * parent.base_*, which is fixed for the whole parallel run
+   */
+
+  std::vector<unsigned int> rows;
+  std::vector<unsigned int> hidden_rows;
+  std::vector<unsigned int> task_stack;
+  std::vector<unsigned int> next_row_stack;
+  std::vector<unsigned int> column_stack;
+
+  unsigned long local_iterations = 0;
+  unsigned long flushed_iterations = 0;
+
+  void cover_column_only(int col) {
+    right[left[col]] = right[col];
+    left[right[col]] = left[col];
+  }
+
+  void uncover_column_only(int col) {
+    right[left[col]] = col;
+    left[right[col]] = col;
+  }
+
+  void cover_column_rows(int col) {
+    for (int r = down[col]; r != col; r = down[r]) {
+      colCount[col] -= weight[r];
+      for (int c = right[r]; c != r; c = right[c]) {
+        up[down[c]] = up[c];
+        down[up[c]] = down[c];
+        colCount[colCount[c]] -= weight[c];
+      }
+    }
+  }
+
+  void uncover_column_rows(int col) {
+    for (int r = up[col]; r != col; r = up[r]) {
+      for (int c = left[r]; c != r; c = left[c]) {
+        colCount[colCount[c]] += weight[c];
+        up[down[c]] = c;
+        down[up[c]] = c;
+      }
+      colCount[col] += weight[r];
+    }
+  }
+
+  void hiderow(int r) {
+    for (int rr = right[r]; rr != r; rr = right[rr]) {
+      up[down[rr]] = up[rr];
+      down[up[rr]] = down[rr];
+      colCount[colCount[rr]] -= weight[rr];
+    }
+    up[down[r]] = up[r];
+    down[up[r]] = down[r];
+    colCount[colCount[r]] -= weight[r];
+  }
+
+  void unhiderow(int r) {
+    up[down[r]] = r;
+    down[up[r]] = r;
+    colCount[colCount[r]] += weight[r];
+    for (int rr = left[r]; rr != r; rr = left[rr]) {
+      up[down[rr]] = rr;
+      down[up[rr]] = rr;
+      colCount[colCount[rr]] += weight[rr];
+    }
+  }
+
+  void hiderows(unsigned int row) {
+    hidden_rows.push_back(0);
+    for (unsigned int r = right[row]; r != row; r = right[r]) {
+      int col = colCount[r];
+      for (int rr = down[col]; rr != col; rr = down[rr]) {
+        if (weight[rr] + weight[col] > parent.max[col]) {
+          hiderow(rr);
+          hidden_rows.push_back(rr);
+        }
+      }
+    }
+  }
+
+  void unhiderows(void) {
+    while (hidden_rows.back()) {
+      unhiderow(hidden_rows.back());
+      hidden_rows.pop_back();
+    }
+    hidden_rows.pop_back();
+  }
+
+  bool column_condition_fulfilled(int col) {
+    return (weight[col] >= parent.min[col]) && (weight[col] <= parent.max[col]);
+  }
+
+  bool column_condition_fulfillable(int col) {
+    if (weight[col] > parent.max[col]) return false;
+    if (weight[col] + colCount[col] < parent.min[col]) return false;
+    return true;
+  }
+
+  bool open_column_conditions_fulfillable(void) {
+    for (int col = right[0]; col; col = right[col]) {
+      if (weight[col] > parent.max[col]) return false;
+      if (weight[col] + colCount[col] < parent.min[col]) return false;
+    }
+    return true;
+  }
+
+  int find_best_unclosed_column(void) {
+    int col = right[0];
+    if (col == 0) return -1;
+    int bestcol = col;
+    col = right[col];
+    while (col) {
+      if (betterParams(colCount[col], parent.min[col] - weight[col], parent.max[col] - weight[col],
+                       colCount[bestcol], parent.min[bestcol] - weight[bestcol], parent.max[bestcol] - weight[bestcol]))
+        bestcol = col;
+      if (colCount[col] == 0)
+        return col;
+      col = right[col];
+    }
+    return bestcol;
+  }
+
+  void worker_solution(void) {
+    if (parent.getCallback()) {
+      auto assembly = std::make_unique<assembly_c>(parent.problem.getPuzzle().getGridType());
+
+      std::vector<unsigned int> piece(rows.size());
+      std::vector<unsigned char> tran(rows.size());
+      std::vector<int> x(rows.size());
+      std::vector<int> y(rows.size());
+      std::vector<int> z(rows.size());
+
+      for (unsigned int i = 0; i < rows.size(); i++)
+        parent.getPieceInformation(rows[i], &piece[i], &tran[i], &x[i], &y[i], &z[i]);
+
+      for (unsigned int pc = 0; pc < parent.problem.getNumberOfParts(); pc++) {
+        unsigned int placed = 0;
+        for (unsigned int i = 0; i < rows.size(); i++) {
+          if (piece[i] == pc) {
+            assembly->addPlacement(tran[i], x[i], y[i], z[i]);
+            placed++;
+          }
+        }
+        while (placed < parent.problem.getPartMaximum(pc)) {
+          assembly->addNonPlacement();
+          placed++;
+        }
+      }
+
+      assembly->sort(parent.problem);
+
+      if (parent.avoidTransformedAssemblies &&
+          assembly->smallerRotationExists(parent.problem, parent.avoidTransformedPivot,
+                                          parent.avoidTransformedMirror.get(), parent.complete, parent.strictColorRestrictions))
+        return;
+
+      uint64_t sig = 14695981039346656037ULL;
+      for (unsigned int i = 0; i < rows.size(); i++) {
+        sig ^= piece[i]; sig *= 1099511628211ULL;
+        sig ^= tran[i]; sig *= 1099511628211ULL;
+        sig ^= static_cast<uint32_t>(x[i]); sig *= 1099511628211ULL;
+        sig ^= static_cast<uint32_t>(y[i]); sig *= 1099511628211ULL;
+        sig ^= static_cast<uint32_t>(z[i]); sig *= 1099511628211ULL;
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(parent.callbackMutex);
+        if (parent.abbort.load(std::memory_order_relaxed))
+          return;
+        if (!parent.emittedSignatures.insert(sig).second)
+          return;
+        if (!parent.getCallback()->assembly(std::move(assembly)))
+          parent.stop();
+      }
+    }
+  }
+
+  void restoreMatrix(const assembler_1_c::SubtreeTask_1 & task) {
+    task_stack = task.task_stack;
+    next_row_stack = task.next_row_stack;
+    column_stack = task.column_stack;
+    rows = task.rows;
+    hidden_rows = task.hidden_rows;
+
+    unsigned int column_stack_pos = 0;
+    unsigned int hiderows_pos = 0;
+    unsigned int row_pos = 0;
+
+    for (size_t i = 0; i + 1 < task_stack.size(); i++) {
+      switch (task_stack[i]) {
+        case 1:
+          cover_column_only(column_stack[column_stack_pos++]);
+          break;
+        case 2:
+          cover_column_rows(column_stack[column_stack_pos - 1]);
+          break;
+        case 5: {
+          hiderows_pos++;
+          while (hiderows_pos < hidden_rows.size() && hidden_rows[hiderows_pos] > 0) {
+            hiderow(hidden_rows[hiderows_pos++]);
+          }
+
+          unsigned int r = rows[row_pos++];
+          weight[colCount[r]] += weight[r];
+          for (unsigned int rc = right[r]; rc != r; rc = right[rc])
+            weight[colCount[rc]] += weight[rc];
+
+          hiderows_pos++;
+          while (hiderows_pos < hidden_rows.size() && hidden_rows[hiderows_pos] > 0) {
+            hiderow(hidden_rows[hiderows_pos++]);
+          }
+          break;
+        }
+        default:
+          bt_assert(false);
+      }
+    }
+  }
+
+  void worker_iterative(unsigned int base_depth) {
+    unsigned int row, col;
+
+    while (task_stack.size() >= base_depth && !parent.abbort.load(std::memory_order_relaxed)) {
+      local_iterations++;
+      if ((local_iterations - flushed_iterations) >= 128) {
+        parent.iterations.fetch_add(local_iterations - flushed_iterations, std::memory_order_relaxed);
+        flushed_iterations = local_iterations;
+      }
+
+      switch (task_stack.back()) {
+        case 0:
+          if (parent.holes < parent.holeColumns.size()) {
+            unsigned int cnt = parent.holes;
+            bool ret = false;
+            for (unsigned int i = 0; i < parent.holeColumns.size(); i++) {
+              if (colCount[parent.holeColumns[i]] == 0 && weight[parent.holeColumns[i]] == 0) {
+                if (cnt == 0) {
+                  next_row_stack.pop_back();
+                  task_stack.pop_back();
+                  ret = true;
+                  break;
+                } else {
+                  cnt--;
+                }
+              }
+            }
+            if (ret) break;
+          }
+
+          if (next_row_stack.back() < parent.headerNodes) {
+            if (right[0] == 0) {
+              worker_solution();
+              next_row_stack.pop_back();
+              task_stack.pop_back();
+              break;
+            }
+
+            int c = find_best_unclosed_column();
+            if (c == -1) {
+              next_row_stack.pop_back();
+              task_stack.pop_back();
+              break;
+            }
+
+            if (colCount[c] == 0) {
+              if (column_condition_fulfilled(c)) {
+                cover_column_only(c);
+                column_stack.push_back(c);
+                task_stack.back() = 1;
+                task_stack.push_back(0);
+                next_row_stack.push_back(0);
+                break;
+              }
+            } else {
+              cover_column_only(c);
+              column_stack.push_back(c);
+              task_stack.back() = 1;
+              task_stack.push_back(0);
+              next_row_stack.push_back(down[c]);
+              break;
+            }
+
+            next_row_stack.pop_back();
+            task_stack.pop_back();
+            break;
+          }
+
+          col = colCount[next_row_stack.back()];
+          bt_assert(column_condition_fulfillable(col));
+
+          if (column_condition_fulfilled(col)) {
+            cover_column_rows(col);
+            if (open_column_conditions_fulfillable()) {
+              task_stack.back() = 2;
+              task_stack.push_back(0);
+              next_row_stack.push_back(0);
+              break;
+            }
+            task_stack.back() = 2;
+            break;
+          }
+
+          task_stack.back() = 3;
+          break;
+
+        case 1:
+          uncover_column_only(column_stack.back());
+          column_stack.pop_back();
+          next_row_stack.pop_back();
+          task_stack.pop_back();
+          break;
+
+        case 2:
+          uncover_column_rows(colCount[next_row_stack.back()]);
+          [[fallthrough]];
+
+        case 3:
+          hidden_rows.push_back(0);
+          row = next_row_stack.back();
+          if (up[row] < row) {
+            rows.push_back(row);
+            [[fallthrough]];
+          } else {
+            task_stack.back() = 7;
+            break;
+          }
+
+        case 4:
+          row = rows.back();
+          col = colCount[next_row_stack.back()];
+          weight[colCount[row]] += weight[row];
+          for (unsigned int r = right[row]; r != row; r = right[r])
+            weight[colCount[r]] += weight[r];
+
+          if (open_column_conditions_fulfillable()) {
+            hiderows(row);
+            if (open_column_conditions_fulfillable()) {
+              if (colCount[col] == 0) {
+                if (column_condition_fulfilled(col)) {
+                  task_stack.back() = 5;
+                  task_stack.push_back(0);
+                  next_row_stack.push_back(0);
+                  break;
+                }
+              } else {
+                if (column_condition_fulfillable(col)) {
+                  unsigned int newrow = row;
+                  while ((down[newrow] >= parent.headerNodes) && up[down[newrow]] != newrow)
+                    newrow = down[newrow];
+                  task_stack.back() = 5;
+                  task_stack.push_back(0);
+                  next_row_stack.push_back(newrow);
+                  break;
+                }
+              }
+            }
+          } else {
+            task_stack.back() = 6;
+            break;
+          }
+          [[fallthrough]];
+
+        case 5:
+          unhiderows();
+          [[fallthrough]];
+
+        case 6:
+          row = rows.back();
+          for (unsigned int r = left[row]; r != row; r = left[r])
+            weight[colCount[r]] -= weight[r];
+          weight[colCount[row]] -= weight[row];
+          rows.pop_back();
+
+          hiderow(row);
+          hidden_rows.push_back(row);
+
+          row = down[row];
+          if (up[row] < row) {
+            rows.push_back(row);
+            task_stack.back() = 4;
+            break;
+          }
+          [[fallthrough]];
+
+        case 7:
+          unhiderows();
+          next_row_stack.pop_back();
+          task_stack.pop_back();
+          break;
+
+        default:
+          bt_assert(0);
+          break;
+      }
+    }
+  }
+
+public:
+  assemblerWorker_1(assembler_1_c & p)
+    : parent(p),
+      left(p.base_left),
+      right(p.base_right),
+      up(p.base_up),
+      down(p.base_down),
+      colCount(p.base_colCount),
+      weight(p.base_weight)
+  {
+    rows.reserve(parent.headerNodes);
+    hidden_rows.reserve(parent.headerNodes * 4);
+    task_stack.reserve(parent.headerNodes);
+    next_row_stack.reserve(parent.headerNodes);
+    column_stack.reserve(parent.headerNodes);
+  }
+
+  void searchSubtree(const assembler_1_c::SubtreeTask_1 & task) {
+    /* re-seed straight from the parent: base_* is written once in assemble()
+     * and never touched while workers run, so a private copy per worker only
+     * doubled the resident matrix count (2*nthreads+1 instead of nthreads+1)
+     */
+    left = parent.base_left;
+    right = parent.base_right;
+    up = parent.base_up;
+    down = parent.base_down;
+    colCount = parent.base_colCount;
+    weight = parent.base_weight;
+
+    restoreMatrix(task);
+    worker_iterative(task.task_stack.size());
+  }
+
+  void flushIterations() {
+    unsigned long unflushed = local_iterations - flushed_iterations;
+    if (unflushed > 0) {
+      parent.iterations.fetch_add(unflushed, std::memory_order_relaxed);
+      flushed_iterations = local_iterations;
+    }
+  }
+};
+
+void assembler_1_c::generateTasksAtDepth(unsigned int cutoff_depth, std::vector<SubtreeTask_1> & tasks) {
+  tasks.clear();
+
+  left = base_left;
+  right = base_right;
+  up = base_up;
+  down = base_down;
+  colCount = base_colCount;
+  weight = base_weight;
+
+  task_stack = { 0 };
+  next_row_stack = { 0 };
+  column_stack.clear();
+  rows.clear();
+  hidden_rows.clear();
+
+  unsigned int row, col;
+
+  while (task_stack.size() > 0 && !abbort.load(std::memory_order_relaxed)) {
+    iterations.fetch_add(1, std::memory_order_relaxed);
+
+    switch (task_stack.back()) {
+      case 0:
+        if (holes < holeColumns.size()) {
+          unsigned int cnt = holes;
+          bool ret = false;
+          for (unsigned int i = 0; i < holeColumns.size(); i++) {
+            if (colCount[holeColumns[i]] == 0 && weight[holeColumns[i]] == 0) {
+              if (cnt == 0) {
+                next_row_stack.pop_back();
+                task_stack.pop_back();
+                ret = true;
+                break;
+              } else {
+                cnt--;
+              }
+            }
+          }
+          if (ret) break;
+        }
+
+        if (next_row_stack.back() < headerNodes && right[0] == 0) {
+          SubtreeTask_1 t;
+          t.task_stack = task_stack;
+          t.next_row_stack = next_row_stack;
+          t.column_stack = column_stack;
+          t.rows = rows;
+          t.hidden_rows = hidden_rows;
+          tasks.push_back(std::move(t));
+
+          next_row_stack.pop_back();
+          task_stack.pop_back();
+          break;
+        }
+
+        if (rows.size() >= cutoff_depth) {
+          SubtreeTask_1 t;
+          t.task_stack = task_stack;
+          t.next_row_stack = next_row_stack;
+          t.column_stack = column_stack;
+          t.rows = rows;
+          t.hidden_rows = hidden_rows;
+          tasks.push_back(std::move(t));
+
+          next_row_stack.pop_back();
+          task_stack.pop_back();
+          break;
+        }
+
+        if (next_row_stack.back() < headerNodes) {
+          int c = find_best_unclosed_column();
+          if (c == -1) {
+            next_row_stack.pop_back();
+            task_stack.pop_back();
+            break;
+          }
+
+          if (colCount[c] == 0) {
+            if (column_condition_fulfilled(c)) {
+              cover_column_only(c);
+              column_stack.push_back(c);
+              task_stack.back() = 1;
+              task_stack.push_back(0);
+              next_row_stack.push_back(0);
+              break;
+            }
+          } else {
+            cover_column_only(c);
+            column_stack.push_back(c);
+            task_stack.back() = 1;
+            task_stack.push_back(0);
+            next_row_stack.push_back(down[c]);
+            break;
+          }
+
+          next_row_stack.pop_back();
+          task_stack.pop_back();
+          break;
+        }
+
+        col = colCount[next_row_stack.back()];
+        bt_assert(column_condition_fulfillable(col));
+
+        if (column_condition_fulfilled(col)) {
+          cover_column_rows(col);
+          if (open_column_conditions_fulfillable()) {
+            task_stack.back() = 2;
+            task_stack.push_back(0);
+            next_row_stack.push_back(0);
+            break;
+          }
+          task_stack.back() = 2;
+          break;
+        }
+
+        task_stack.back() = 3;
+        break;
+
+      case 1:
+        uncover_column_only(column_stack.back());
+        column_stack.pop_back();
+        next_row_stack.pop_back();
+        task_stack.pop_back();
+        break;
+
+      case 2:
+        uncover_column_rows(colCount[next_row_stack.back()]);
+        [[fallthrough]];
+
+      case 3:
+        hidden_rows.push_back(0);
+        row = next_row_stack.back();
+        if (up[row] < row) {
+          rows.push_back(row);
+          [[fallthrough]];
+        } else {
+          task_stack.back() = 7;
+          break;
+        }
+
+      case 4:
+        row = rows.back();
+        col = colCount[next_row_stack.back()];
+        weight[colCount[row]] += weight[row];
+        for (unsigned int r = right[row]; r != row; r = right[r])
+          weight[colCount[r]] += weight[r];
+
+        if (open_column_conditions_fulfillable()) {
+          hiderows(row);
+          if (open_column_conditions_fulfillable()) {
+            if (colCount[col] == 0) {
+              if (column_condition_fulfilled(col)) {
+                task_stack.back() = 5;
+                task_stack.push_back(0);
+                next_row_stack.push_back(0);
+                break;
+              }
+            } else {
+              if (column_condition_fulfillable(col)) {
+                unsigned int newrow = row;
+                while ((down[newrow] >= headerNodes) && up[down[newrow]] != newrow)
+                  newrow = down[newrow];
+                task_stack.back() = 5;
+                task_stack.push_back(0);
+                next_row_stack.push_back(newrow);
+                break;
+              }
+            }
+          }
+        } else {
+          task_stack.back() = 6;
+          break;
+        }
+        [[fallthrough]];
+
+      case 5:
+        unhiderows();
+        [[fallthrough]];
+
+      case 6:
+        row = rows.back();
+        for (unsigned int r = left[row]; r != row; r = left[r])
+          weight[colCount[r]] -= weight[r];
+        weight[colCount[row]] -= weight[row];
+        rows.pop_back();
+
+        hiderow(row);
+        hidden_rows.push_back(row);
+
+        row = down[row];
+        if (up[row] < row) {
+          rows.push_back(row);
+          task_stack.back() = 4;
+          break;
+        }
+        [[fallthrough]];
+
+      case 7:
+        unhiderows();
+        next_row_stack.pop_back();
+        task_stack.pop_back();
+        break;
+
+      default:
+        bt_assert(0);
+        break;
+    }
+  }
+
+  left = base_left;
+  right = base_right;
+  up = base_up;
+  down = base_down;
+  colCount = base_colCount;
+  weight = base_weight;
+
+  task_stack = { 0 };
+  next_row_stack = { 0 };
+  column_stack.clear();
+  rows.clear();
+  hidden_rows.clear();
+}
+
+void assembler_1_c::generateSubtreeTasks(
+    std::vector<SubtreeTask_1> & tasks,
+    unsigned int targetTasks,
+    unsigned int maxDepth)
+{
+  tasks.clear();
+  unsigned int cutoff_depth = 1;
+  if (maxDepth == 0) maxDepth = 1;
+
+  while (cutoff_depth <= maxDepth && !abbort.load(std::memory_order_relaxed)) {
+    generateTasksAtDepth(cutoff_depth, tasks);
+    if (tasks.size() >= targetTasks || tasks.empty())
+      break;
+    if (cutoff_depth == maxDepth)
+      break;
+    cutoff_depth++;
+  }
+}
+
+void assembler_1_c::parallelMultiSearch(unsigned int workers) {
+  abbort.store(false, std::memory_order_relaxed);
+  running.store(true, std::memory_order_relaxed);
+
+  /* Workers call smallerRotationExists() outside callbackMutex, which reaches
+   * the lazy mutable caches on the result shape AND on every part shape.
+   * Warm them all here, on the master, before any worker exists.
+   */
+  if (avoidTransformedAssemblies)
+    prewarmSharedShapeCaches(problem);
+
+  if (parallelTasks.empty()) {
+    unsigned int targetTasks = std::max(16u, workers * 4);
+    unsigned int maxDepth = std::min(piecenumber, 3u);
+    generateSubtreeTasks(parallelTasks, targetTasks, maxDepth);
+    taskCompleted.assign(parallelTasks.size(), 0);
+    totalTasks.store(parallelTasks.size(), std::memory_order_relaxed);
+    completedTasks.store(0, std::memory_order_relaxed);
+  }
+
+  if (parallelTasks.empty() || abbort.load(std::memory_order_relaxed)) {
+    if (!abbort.load(std::memory_order_relaxed)) {
+      totalTasks.store(1, std::memory_order_relaxed);
+      completedTasks.store(1, std::memory_order_relaxed);
+    }
+    running.store(false, std::memory_order_relaxed);
+    return;
+  }
+
+  std::vector<size_t> remainingIndices;
+  remainingIndices.reserve(parallelTasks.size());
+  for (size_t i = 0; i < parallelTasks.size(); i++) {
+    if (!taskCompleted[i])
+      remainingIndices.push_back(i);
+  }
+
+  if (remainingIndices.empty()) {
+    totalTasks.store(1, std::memory_order_relaxed);
+    completedTasks.store(1, std::memory_order_relaxed);
+    running.store(false, std::memory_order_relaxed);
+    return;
+  }
+
+  std::atomic<size_t> nextIndexPtr{0};
+  std::exception_ptr workerException = nullptr;
+  std::mutex exceptionMutex;
+
+  auto workerFunc = [this, &remainingIndices, &nextIndexPtr, &workerException, &exceptionMutex]() {
+    try {
+      assemblerWorker_1 worker(*this);
+
+      while (!abbort.load(std::memory_order_relaxed)) {
+        size_t idx = nextIndexPtr.fetch_add(1, std::memory_order_relaxed);
+        if (idx >= remainingIndices.size())
+          break;
+
+        size_t taskIdx = remainingIndices[idx];
+        worker.searchSubtree(parallelTasks[taskIdx]);
+        if (!abbort.load(std::memory_order_relaxed)) {
+          taskCompleted[taskIdx] = 1;
+          completedTasks.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+
+      worker.flushIterations();
+    } catch (...) {
+      std::lock_guard<std::mutex> lock(exceptionMutex);
+      if (!workerException)
+        workerException = std::current_exception();
+      abbort.store(true, std::memory_order_relaxed);
+    }
+  };
+
+  std::vector<std::thread> threads;
+  threads.reserve(workers - 1);
+
+  for (unsigned int i = 1; i < workers; i++) {
+    threads.emplace_back(workerFunc);
+  }
+
+  workerFunc();
+
+  for (auto & t : threads) {
+    if (t.joinable())
+      t.join();
+  }
+
+  if (workerException) {
+    running.store(false, std::memory_order_relaxed);
+    std::rethrow_exception(workerException);
+  }
+
+  if (!abbort.load(std::memory_order_relaxed)) {
+    next_row_stack.clear();
+    task_stack.clear();
+    parallelTasks.clear();
+    taskCompleted.clear();
+    emittedSignatures.clear();
+    parallelInterrupted = false;
+  } else {
+    /* Stopped part way. Continuing in this session is fine -- parallelTasks,
+     * taskCompleted and emittedSignatures are all still here. But
+     * generateTasksAtDepth() resets the master back to the root on every exit,
+     * so what save() would write is the root state, i.e. "nothing searched
+     * yet" next to an already populated solution list. Mark it so the reload
+     * refuses it instead of silently reporting everything a second time.
+     */
+    parallelInterrupted = true;
+  }
+
+  running.store(false, std::memory_order_relaxed);
+}
+
+bool assembler_1_c::canUseSimd(void) const {
+  if (task_stack.size() != 1 || !rows.empty() || next_row_stack.size() != 1)
+    return false;
+  if (std::getenv("BURRTOOLS_NO_SIMD"))
+    return false;
+  if (debug)
+    return false;
+
+  if (headerNodes - 1 > 32768)
+    return false;
+
+  const voxel_c * result = getResultShape(problem);
+  unsigned int num_cols = headerNodes - 1;
+  unsigned int num_shapes = problem.getNumberOfParts();
+  unsigned int res_filled = result ? result->countState(voxel_c::VX_FILLED) : 0;
+  unsigned int res_vari = result ? result->countState(voxel_c::VX_VARIABLE) : 0;
+  bool hasRange = (num_cols == (num_shapes + res_filled + res_vari + 1));
+  if (hasRange)
+    return false;
+
+  if (res_vari > 0) {
+    for (unsigned int s = 0; s < problem.getNumberOfParts(); s++) {
+      if (problem.getPartMinimum(s) != problem.getPartMaximum(s))
+        return false;
+    }
+  }
+
+  return true;
+}
+
+std::unique_ptr<ISimdHuangCover> assembler_1_c::createSimdSolver(void) const {
+  const voxel_c * result = getResultShape(problem);
+  unsigned int num_cols = headerNodes - 1;
+  unsigned int num_shapes = problem.getNumberOfParts();
+  unsigned int res_filled = result->countState(voxel_c::VX_FILLED);
+  unsigned int res_vari = result->countState(voxel_c::VX_VARIABLE);
+  bool hasRange = (num_cols == (num_shapes + res_filled + res_vari + 1));
+  unsigned int rangeColumn = hasRange ? num_cols : 0;
+
+  std::unique_ptr<ISimdHuangCover> solver;
+  if (num_cols <= 256) {
+    solver = std::make_unique<SimdHuangCover256>(num_cols, num_shapes);
+  } else if (num_cols <= 512) {
+    solver = std::make_unique<SimdHuangCover512>(num_cols, num_shapes);
+  } else if (num_cols <= 1024) {
+    solver = std::make_unique<SimdHuangCover1024>(num_cols, num_shapes);
+  } else if (num_cols <= 2048) {
+    solver = std::make_unique<SimdHuangCover2048>(num_cols, num_shapes);
+  } else if (num_cols <= 4096) {
+    solver = std::make_unique<SimdHuangCover4096>(num_cols, num_shapes);
+  } else if (num_cols <= 8192) {
+    solver = std::make_unique<SimdHuangCover8192>(num_cols, num_shapes);
+  } else if (num_cols <= 16384) {
+    solver = std::make_unique<SimdHuangCover16384>(num_cols, num_shapes);
+  } else {
+    solver = std::make_unique<SimdHuangCover32768>(num_cols, num_shapes);
+  }
+  solver->setHoles(holes);
+
+  for (unsigned int c = 1; c <= num_cols; c++) {
+    bool is_shape = (c <= num_shapes);
+    bool is_range = (hasRange && c == rangeColumn);
+    bool is_voxel = (!is_shape && !is_range);
+    bool is_hole = false;
+    for (unsigned int hc : holeColumns) {
+      if (hc == c) {
+        is_hole = true;
+        break;
+      }
+    }
+    solver->setColumnBounds(c, min[c], max[c], is_voxel, is_shape, is_range, is_hole);
+  }
+
+  for (unsigned int pc = 0; pc < num_shapes; pc++) {
+    unsigned int shape_col = pc + 1;
+    unsigned int shape_row_idx = 0;
+    for (int r = down[shape_col]; r != (int)shape_col; r = down[r]) {
+      std::vector<unsigned int> cols;
+      std::vector<unsigned int> weights;
+      std::vector<unsigned int> nodes_in_row;
+      unsigned int curr = r;
+      unsigned int range_w = 0;
+      do {
+        nodes_in_row.push_back(curr);
+        unsigned int col = colCount[curr];
+        unsigned int w = weight[curr];
+        cols.push_back(col);
+        weights.push_back(w);
+        if (hasRange && col == rangeColumn) {
+          range_w = w;
+        }
+        curr = right[curr];
+      } while (curr != (unsigned int)r);
+
+      uint32_t row_idx = solver->addRow(r, pc, shape_col, shape_row_idx++, range_w, cols, weights);
+      for (unsigned int n : nodes_in_row) {
+        solver->registerNodeAlias(n, row_idx);
+      }
+    }
+  }
+
+  return solver;
+}
+
+void assembler_1_c::simdSearch(void) {
+  running.store(true, std::memory_order_relaxed);
+  abbort.store(false, std::memory_order_relaxed);
+
+  auto solver = createSimdSolver();
+  std::atomic<uint64_t> simd_iter{0};
+
+  solver->solve([this](const std::vector<unsigned int> &solution_nodes) -> bool {
+    rows = solution_nodes;
+    solution();
+    return !abbort.load(std::memory_order_relaxed);
+  }, abbort, simd_iter);
+
+  iterations.fetch_add(simd_iter.load(std::memory_order_relaxed), std::memory_order_relaxed);
+
+  parallelInterrupted = abbort.load(std::memory_order_relaxed);
+  simdCompleted = !parallelInterrupted;
+
+  running.store(false, std::memory_order_relaxed);
+}
+
 void assembler_1_c::assemble(assembler_cb * callback) {
 
-  running = true;
-  abort.store(false, std::memory_order_relaxed);
+  running.store(true, std::memory_order_relaxed);
+  abbort.store(false, std::memory_order_relaxed);
   debug = false;
+
+  /* a previous parallel run leaves totalTasks == completedTasks, which would
+   * make getFinished() report 1.0 for this run before it has done anything
+   */
+  resetTaskProgress();
+
+  finished_a.reserve(headerNodes);
+  finished_b.reserve(headerNodes);
+
+  base_left = left;
+  base_right = right;
+  base_up = up;
+  base_down = down;
+  base_colCount = colCount;
+  base_weight = weight;
 
   if (errorsState == ERR_NONE) {
 
     // run, when something to do
     if (next_row_stack.size()) {
       asm_bc = callback;
-      iterative();
+      unsigned int threads = getEffectiveThreads();
+      if (task_stack.size() == 1 && rows.empty() && next_row_stack.size() == 1 && threads > 1) {
+        parallelMultiSearch(threads);
+      } else if (canUseSimd()) {
+        simdSearch();
+      } else {
+        iterative();
+      }
     }
   }
 
-  running = false;
+  running.store(false, std::memory_order_relaxed);
+}
+
+void assembler_1_c::pushFinished(unsigned int b) {
+  std::lock_guard<std::mutex> guard(finishedMutex);
+  finished_b.push_back(b);
+  finished_a.push_back(0);
+}
+
+void assembler_1_c::popFinished(void) {
+  std::lock_guard<std::mutex> guard(finishedMutex);
+  finished_a.pop_back();
+  finished_b.pop_back();
 }
 
 float assembler_1_c::getFinished(void) const {
 
+  size_t total = totalTasks.load(std::memory_order_relaxed);
+  if (total > 0) {
+    if (!running.load(std::memory_order_relaxed) && !abbort.load(std::memory_order_relaxed))
+      return 1.0f;
+    return static_cast<float>(completedTasks.load(std::memory_order_relaxed)) / static_cast<float>(total);
+  }
+
   if (next_row_stack.size() == 0) return 1;
 
   float erg = 0;
+
+  /* locked against pushFinished/popFinished so the vectors can not change
+   * size (and expose a slot mid construction/destruction) during the read
+   */
+  std::lock_guard<std::mutex> guard(finishedMutex);
 
   for (int r = finished_a.size()-1; r >= 0; r--) {
 
@@ -1895,8 +2900,21 @@ static int stringToVector(const char * string, std::vector<unsigned int> & v) {
 assembler_c::errState assembler_1_c::setPosition(const char * string, const char * /* version*/) {
 
   unsigned int len = strlen(string);
+  parallelTasks.clear();
+  taskCompleted.clear();
+  emittedSignatures.clear();
 
   unsigned int pos = 0;
+
+  /* leading flag written by save(): an interrupted parallel search recorded
+   * neither how far its workers got nor which assemblies it already reported
+   */
+  {
+    unsigned int interrupted = 0;
+    pos += getInt(string+pos, &interrupted);
+    if (pos >= len) return ERR_CAN_NOT_RESTORE_SYNTAX;
+    if (interrupted) return ERR_CAN_NOT_RESTORE_INTERRUPTED;
+  }
 
   pos += stringToVector(string+pos, rows);           if (pos >= len) return ERR_CAN_NOT_RESTORE_SYNTAX;
   pos += stringToVector(string+pos, task_stack);     if (pos >= len) return ERR_CAN_NOT_RESTORE_SYNTAX;
@@ -1967,6 +2985,11 @@ void assembler_1_c::save(xmlWriter_c & xml) const
 
   std::ostream & str = xml.addContent();
 
+  /* leading flag: 1 marks a parallel search that was interrupted and whose
+   * position can therefore not be resumed (see parallelInterrupted)
+   */
+  str << (parallelInterrupted ? 1 : 0) << " ";
+
   vectorToStream(rows, str);
   vectorToStream(task_stack, str);
   vectorToStream(next_row_stack, str);
@@ -2025,7 +3048,7 @@ unsigned int assembler_1_c::getPiecePlacementCount(unsigned int piece) const {
 void assembler_1_c::debug_step(unsigned long num) {
   debug = true;
   debug_loops = num;
-  abort.store(false, std::memory_order_relaxed);
+  abbort.store(false, std::memory_order_relaxed);
   asm_bc = 0;
   iterative();
   debug = false;

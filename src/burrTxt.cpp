@@ -42,6 +42,7 @@
 #include <unistd.h>
 #endif
 
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -50,6 +51,7 @@ using namespace std;
 
 bool disassemble;
 bool checkRotations;
+bool strictColors;
 bool allProblems;
 bool printDisassemble;
 bool printSolutions;
@@ -57,7 +59,7 @@ bool quiet;
 bool jsonOutput;
 solverType_e solverType;
 
-disassembler_c * d;
+std::unique_ptr<disassembler_c> d;
 
 #ifndef _WIN32
 /** Silence library diagnostics on stderr during batch solves. */
@@ -95,41 +97,67 @@ private:
 };
 #endif
 
-/** Parse dot-separated move text the same way icsearch/process.py does. */
-static bool parse_dotlevel(const char * dotlevel, int * level, int * totalmoves) {
+/** Parsed disassembly level string (plain `5.1.3` or rotation form `5R0.1R3`). */
+struct dotlevel_stats_c {
+  int level;       /**< slides+rots for the first piece removal */
+  int totalmoves;  /**< sum of all slides and rotations */
+  int moves;       /**< sum of linear slides only */
+  int rotations;   /**< sum of rotation counts after each R */
+};
 
-  int parts[32];
-  int count = 0;
-  int current = 0;
-  bool in_number = false;
+/**
+ * Parse movesText() output.
+ * Plain form: each dotted part is a slide count (rots treated as 0).
+ * Rotation form: each part is `slidesRrots` (e.g. `5R0.1R3`).
+ */
+static bool parse_dotlevel(const char * dotlevel, dotlevel_stats_c * out) {
 
-  for (const char * p = dotlevel; ; p++) {
-    if (*p >= '0' && *p <= '9') {
-      in_number = true;
-      current = current * 10 + (*p - '0');
-    } else if (*p == '.' || *p == 0) {
-      if (!in_number)
-        return false;
-      if (count >= 32)
-        return false;
-      parts[count++] = current;
-      current = 0;
-      in_number = false;
-      if (*p == 0)
-        break;
-    } else {
+  int firstSlides = -1;
+  int firstRots = 0;
+  int moves = 0;
+  int rotations = 0;
+  int segments = 0;
+
+  const char * p = dotlevel;
+  while (*p) {
+    if (*p < '0' || *p > '9')
       return false;
+
+    int slides = 0;
+    while (*p >= '0' && *p <= '9')
+      slides = slides * 10 + (*p++ - '0');
+
+    int rots = 0;
+    if (*p == 'R') {
+      p++;
+      if (*p < '0' || *p > '9')
+        return false;
+      while (*p >= '0' && *p <= '9')
+        rots = rots * 10 + (*p++ - '0');
     }
+
+    if (segments == 0) {
+      firstSlides = slides;
+      firstRots = rots;
+    }
+    moves += slides;
+    rotations += rots;
+    segments++;
+
+    if (*p == 0)
+      break;
+    if (*p != '.')
+      return false;
+    p++;
   }
 
-  if (count == 0)
+  if (segments == 0 || firstSlides < 0)
     return false;
 
-  *level = parts[0];
-  int total = 0;
-  for (int i = 0; i < count; i++)
-    total += parts[i];
-  *totalmoves = total;
+  out->level = firstSlides + firstRots;
+  out->totalmoves = moves + rotations;
+  out->moves = moves;
+  out->rotations = rotations;
   return true;
 }
 
@@ -155,10 +183,12 @@ public:
   char bestDotlevel[200];
   int bestLevel;
   int bestTotalmoves;
+  int bestMoves;
+  int bestRotations;
 
   asm_cb(problem_c * p) :
     Assemblies(0), Solutions(0), pn(p->getNumberOfPieces()), puzzle(p),
-    hasBest(false), bestLevel(0), bestTotalmoves(0)
+    hasBest(false), bestLevel(0), bestTotalmoves(0), bestMoves(0), bestRotations(0)
   {
     bestDotlevel[0] = 0;
   }
@@ -166,23 +196,24 @@ public:
   void considerLevel(separation_c * da) {
 
     char lev[200];
-    da->movesText(lev, 200);
+    snprintf(lev, sizeof(lev), "%s", da->movesText().c_str());
 
-    int level = 0;
-    int totalmoves = 0;
-    if (!parse_dotlevel(lev, &level, &totalmoves))
+    dotlevel_stats_c stats;
+    if (!parse_dotlevel(lev, &stats))
       return;
 
-    if (!hasBest || level_is_better(level, totalmoves, bestLevel, bestTotalmoves)) {
+    if (!hasBest || level_is_better(stats.level, stats.totalmoves, bestLevel, bestTotalmoves)) {
       hasBest = true;
       strncpy(bestDotlevel, lev, sizeof(bestDotlevel));
       bestDotlevel[sizeof(bestDotlevel) - 1] = 0;
-      bestLevel = level;
-      bestTotalmoves = totalmoves;
+      bestLevel = stats.level;
+      bestTotalmoves = stats.totalmoves;
+      bestMoves = stats.moves;
+      bestRotations = stats.rotations;
     }
   }
 
-  bool assembly(assembly_c * a) {
+  bool assembly(std::unique_ptr<assembly_c> a) override {
 
     std::lock_guard<std::mutex> lock(cbMutex);
 
@@ -190,34 +221,27 @@ public:
 
     if (disassemble) {
 
-      separation_c * da = d->disassemble(a);
+      auto da = d->disassemble(a.get());
 
       if (da) {
         Solutions++;
 
         if (jsonOutput) {
-          considerLevel(da);
+          considerLevel(da.get());
         } else {
           if (printSolutions)
-            print(a, puzzle);
+            print(a.get(), puzzle);
 
-          if (!quiet || allProblems) {
-            char lev[200];
-            da->movesText(lev,200);
-            printf("level: %s\n", lev);
-          }
+          if (!quiet || allProblems)
+            printf("level: %s\n", da->movesText().c_str());
 
           if (printDisassemble)
-            print(da, a, puzzle);
+            print(da.get(), a.get(), puzzle);
         }
-
-        delete da;
       }
 
     } else if (printSolutions)
-      print(a, puzzle);
-
-    delete a;
+      print(a.get(), puzzle);
 
     return true;
   }
@@ -231,9 +255,13 @@ struct json_result_c {
   char bestDotlevel[200];
   int bestLevel;
   int bestTotalmoves;
+  int bestMoves;
+  int bestRotations;
+  double solvetime;
 
   json_result_c(void) :
-    assemblies(0), solutions(0), hasBest(false), bestLevel(0), bestTotalmoves(0)
+    assemblies(0), solutions(0), hasBest(false), bestLevel(0), bestTotalmoves(0),
+    bestMoves(0), bestRotations(0), solvetime(0)
   {
     bestDotlevel[0] = 0;
   }
@@ -250,7 +278,13 @@ struct json_result_c {
       bestDotlevel[sizeof(bestDotlevel) - 1] = 0;
       bestLevel = a.bestLevel;
       bestTotalmoves = a.bestTotalmoves;
+      bestMoves = a.bestMoves;
+      bestRotations = a.bestRotations;
     }
+  }
+
+  void addSolveTime(double seconds) {
+    solvetime += seconds;
   }
 };
 
@@ -259,13 +293,19 @@ static void print_json_result(const json_result_c & stats) {
   printf("{\"assemblies\":%d,\"solutions\":%d",
       stats.assemblies, stats.solutions);
 
-  if (stats.hasBest)
+  if (stats.hasBest) {
     printf(",\"dotlevel\":\"%s\",\"level\":%d,\"totalmoves\":%d",
         stats.bestDotlevel, stats.bestLevel, stats.bestTotalmoves);
-  else
+    if (checkRotations)
+      printf(",\"moves\":%d,\"rotations\":%d",
+          stats.bestMoves, stats.bestRotations);
+  } else {
     printf(",\"dotlevel\":null,\"level\":null,\"totalmoves\":null");
+    if (checkRotations)
+      printf(",\"moves\":null,\"rotations\":null");
+  }
 
-  printf("}\n");
+  printf(",\"solvetime\":%.3f}\n", stats.solvetime);
 }
 
 void usage(void) {
@@ -273,18 +313,24 @@ void usage(void) {
   cout << "burrTxt [options] file [options]\n\n";
   cout << "  file: puzzle file with the puzzle definition to solve\n\n";
   cout << "  --json  machine-readable result for batch tools (implies -d -q -r;\n";
-  cout << "          prints one JSON object with the highest disassembly level)\n";
+  cout << "          prints one JSON object with the highest disassembly level.\n";
+  cout << "          Fields: assemblies, solutions, dotlevel, level, totalmoves,\n";
+  cout << "          solvetime (seconds); with -R also moves (linear) and rotations)\n";
   cout << "  Short options may be combined (e.g. -dR, -rq).\n";
   cout << "  -d      try to disassemble and only print solutions that do disassemble\n";
   cout << "  -p      print the disassembly plan\n";
   cout << "  -r      reduce the placements before starting to solve the puzzle\n";
   cout << "  -R      also try 90 degree piece rotations during disassembly (implies -d, brick grids)\n";
+  cout << "  -C      strict color restrictions: a voxel fits only a result voxel of the same color\n";
+  cout << "          (a colored voxel does not also fit a neutral one, and a neutral voxel\n";
+  cout << "          fits only a neutral result voxel)\n";
   cout << "  -s      print the assembly\n";
   cout << "  -q      be quiet and only print statistics\n";
   cout << "  -n      don't print a newline at the end of the line\n";
   cout << "  -o n    select the problem to solve\n";
   cout << "  -o all  solves all problems in file\n";
   cout << "  -x      only redisassemble the given solutions\n";
+  cout << "  -t n    set number of worker threads for assembler (0 = auto)\n";
   cout << "  --solver TYPE\n";
   cout << "          solver engine. If omitted, BurrTools Classic is used.\n";
   cout << "          TYPE (case-insensitive; quotes needed if it has spaces):\n";
@@ -307,6 +353,7 @@ int main(int argv, char* args[]) {
   int state = 0;
   disassemble = false;
   checkRotations = false;
+  strictColors = false;
   allProblems = false;
   printDisassemble = false;
   printSolutions = false;
@@ -321,6 +368,7 @@ int main(int argv, char* args[]) {
   bool reduce = false;
   bool newline = true;
   bool ask = false;
+  unsigned int threads = 0;
   enum {
     W_NUM_SOLUTIONS,
     W_SOLUTION_PIECES,
@@ -350,6 +398,24 @@ int main(int argv, char* args[]) {
           fprintf(stderr, "         (also: classic, crowell, bt2)\n");
           return 2;
         }
+        i++;
+      } else if (strcmp(args[i], "-t") == 0) {
+        /* -t as the last argument used to pass the null terminator to atoi
+         * before dereferencing; strtol rather than atoi so that a negative or
+         * non-numeric value is rejected instead of wrapping into a huge
+         * unsigned thread count
+         */
+        if (i + 1 >= argv) {
+          cout << "-t requires a numeric argument\n";
+          return 2;
+        }
+        char *end = nullptr;
+        long t = strtol(args[i+1], &end, 10);
+        if (!end || *end || t < 0) {
+          cout << "-t requires a non-negative number\n";
+          return 2;
+        }
+        threads = (unsigned int)t;
         i++;
       } else if (strcmp(args[i], "-o") == 0) {
         if (i + 1 >= argv) {
@@ -405,6 +471,9 @@ int main(int argv, char* args[]) {
             checkRotations = true;
             disassemble = true;
             break;
+          case 'C':
+            strictColors = true;
+            break;
           case 'n':
             newline = false;
             break;
@@ -444,10 +513,13 @@ int main(int argv, char* args[]) {
     return 2;
   }
 
-  std::istream * str = openGzFile(args[filenumber]);
+  auto str = openGzFile(args[filenumber]);
+  if (!str) {
+    printf("could not open input file \"%s\"\n", args[filenumber]);
+    return 2;
+  }
   xmlParser_c pars(*str);
   puzzle_c p(pars);
-  delete str;
 
   if (ask) {
 
@@ -457,15 +529,15 @@ int main(int argv, char* args[]) {
         break;
       case W_NUM_SOLUTIONS:
         for (unsigned int i = 0; i < p.getNumberOfProblems(); i++)
-          printf("number of solutions for problem %i: %li\n", i, p.getProblem(i)->getNumSolutions());
+          printf("number of solutions for problem %u: %lu\n", i, p.getProblem(i)->getNumSolutions());
         break;
       case W_SOLUTION_PIECES:
       case W_SOLUTION_ASSM:
         for (unsigned int i = 0; i < p.getNumberOfProblems(); i++) {
-          printf("problem %i\n", i);
+          printf("problem %u\n", i);
           for (unsigned int s = 0; s < p.getProblem(i)->getNumSolutions(); s++) {
 
-            printf("%03i: ", s+1);
+            printf("%03u: ", s+1);
             const assembly_c * a = p.getProblem(i)->getSavedSolution(s)->getAssembly();
 
             unsigned int pnum = 0;
@@ -473,7 +545,7 @@ int main(int argv, char* args[]) {
             for (unsigned int pie = 0; pie < p.getProblem(i)->getNumberOfParts(); pie++) {
               for (unsigned int pp = 0; pp < p.getProblem(i)->getPartMaximum(pie); pp++) {
                 if (a->isPlaced(pnum)) {
-                  printf("S%i ", p.getProblem(i)->getShapeIdOfPart(pie)+1);
+                  printf("S%u ", p.getProblem(i)->getShapeIdOfPart(pie)+1);
                 }
                 pnum++;
               }
@@ -519,9 +591,11 @@ int main(int argv, char* args[]) {
 
       problem_c * problem = p.getProblem(pr);
 
-      assembler_c *assm = p.getGridType()->findAssembler(*problem, jsonOutput, solverType);
+      auto assm = p.getGridType()->findAssembler(*problem, jsonOutput, solverType);
+      if (threads > 0)
+        assm->setNumThreads(threads);
 
-      switch (assm->createMatrix(false, false, false)) {
+      switch (assm->createMatrix(false, false, false, strictColors)) {
       case assembler_c::ERR_TOO_MANY_UNITS:
         if (jsonOutput)
           fprintf(stderr, "%i units too many for the result shape\n", assm->getErrorsParam());
@@ -551,6 +625,7 @@ int main(int argv, char* args[]) {
         return jsonOutput ? 1 : 0;
       case assembler_c::ERR_CAN_NOT_RESTORE_VERSION:
       case assembler_c::ERR_CAN_NOT_RESTORE_SYNTAX:
+      case assembler_c::ERR_CAN_NOT_RESTORE_INTERRUPTED:
         /* all other errors should not occur */
         if (jsonOutput)
           fprintf(stderr, "Oops internal error\n");
@@ -562,6 +637,8 @@ int main(int argv, char* args[]) {
 #ifndef _WIN32
       stderr_redirect_c stderrQuiet(jsonOutput);
 #endif
+
+      const auto solveStart = std::chrono::steady_clock::now();
 
       if (reduce) {
         if (!quiet && !jsonOutput)
@@ -576,28 +653,33 @@ int main(int argv, char* args[]) {
 
       asm_cb a(problem);
 
-      d = 0;
+      d.reset();
       if (disassemble)
         d = createDisassembler(*problem, checkRotations, solverType);
 
       if (solverType == SOLVER_BT2)
-        bt2Assemble(assm, &a, bt2ChooseAssemblerWorkers());
+        bt2Assemble(assm.get(), &a, bt2ChooseAssemblerWorkers(assm.get()));
       else
         assm->assemble(&a);
 
+      const double solveSeconds = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - solveStart).count();
+
       if (jsonOutput) {
         jsonStats.merge(a);
+        jsonStats.addSolveTime(solveSeconds);
       } else {
-        cout << a.Assemblies << " assemblies and " << a.Solutions << " solutions found with " << assm->getIterations() << " iterations ";
+        char timeBuf[64];
+        snprintf(timeBuf, sizeof(timeBuf), "%.3f", solveSeconds);
+        cout << a.Assemblies << " assemblies and " << a.Solutions
+             << " solutions found with " << assm->getIterations()
+             << " iterations in " << timeBuf << " seconds";
 
         if (newline)
           cout << endl;
       }
 
-      delete assm;
-      delete d;
-      d = 0;
-      assm = 0;
+      d.reset();
     }
 
     if (jsonOutput)
@@ -614,23 +696,22 @@ int main(int argv, char* args[]) {
 
         if (problem->getSavedSolution(sol)->getAssembly()) {
 
-          separation_c * da = d->disassemble(problem->getSavedSolution(sol)->getAssembly());
+          auto da = d->disassemble(problem->getSavedSolution(sol)->getAssembly());
 
           if (da) {
             if (printSolutions)
               print(problem->getSavedSolution(sol)->getAssembly(), problem);
 
             if (!quiet)
-              printf("level: %i\n", da->getMoves());
+              printf("level: %u\n", da->getMoves());
 
             if (printDisassemble)
-              print(da, problem->getSavedSolution(sol)->getAssembly(),problem);
-            delete da;
+              print(da.get(), problem->getSavedSolution(sol)->getAssembly(),problem);
           }
         }
       }
 
-      delete d;
+      d.reset();
     }
   }
 

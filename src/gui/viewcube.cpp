@@ -925,7 +925,7 @@ void viewCube_c::draw(rotater_c * rot, int winW, int winH, float pixelScale) con
   };
 
   glDisable(GL_TEXTURE_2D);
-  gl_font(FL_HELVETICA_BOLD, 10);
+  gl_font(FL_HELVETICA_BOLD, 12);
 
   for (int f = FACE_PX; f <= FACE_NZ; f++) {
     float n[3];
@@ -949,7 +949,7 @@ void viewCube_c::draw(rotater_c * rot, int winW, int winH, float pixelScale) con
   /* axis letters at the triad tips */
   {
     float sx, sy, sz;
-    gl_font(FL_HELVETICA_BOLD, 11);
+    gl_font(FL_HELVETICA_BOLD, 13);
     const float ox = -1.05f, oy = -1.05f;
     float p[3];
     mulPoint(m, 0.62f, 0, 0, p);

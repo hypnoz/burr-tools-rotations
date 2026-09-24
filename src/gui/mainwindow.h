@@ -81,6 +81,10 @@ class mainWindow_c : public LFl_Double_Window {
   bool changed;
   int editSymmetries;
 
+  bool handlingSystemOpen;
+  bool menuExportActive;
+  bool menuSTLActive;
+
   bool expertMode;
 
   pixmapList_c pm;
@@ -110,7 +114,7 @@ class mainWindow_c : public LFl_Double_Window {
   Fl_Group *solverPane;
   debugStatsPanel_c *debugPanel;
   solveStats_c lastSolveStats;
-  Fl_Check_Button *SolveDisasm, *CheckRotations, *JustCount, *DropDisassemblies, *KeepMirrors, *KeepRotations, *CompleteRotations;
+  Fl_Check_Button *SolveDisasm, *CheckRotations, *JustCount, *DropDisassemblies, *KeepMirrors, *KeepRotations, *StrictColors, *CompleteRotations;
 
   FlatButton *BtnPrepare, *BtnStart, *BtnCont, *BtnStop, *BtnPlacement, *BtnStep, *BtnMovement;
   FlatButton *BtnNewShape, *BtnDelShape, *BtnCpyShape, *BtnRenShape, *BtnUndo, *BtnRedo, *BtnShapeLeft, *BtnShapeRight, *BtnWeightInc, *BtnWeightDec, *BtnDetails;
@@ -138,7 +142,6 @@ class mainWindow_c : public LFl_Double_Window {
 
   Fl_Group *MinSizeTools;
   Fl_Menu_Bar *MainMenu;
-  LFlatButton_c *notesToggle;
   layouter_c *notesPanel;
   LFl_Tile *contentTile;
   LFl_Text_Editor *notesInput;
@@ -168,7 +171,8 @@ class mainWindow_c : public LFl_Double_Window {
   double ViewSizes[3];
   int currentTab;
 
-  bool tryToLoad(const char *fname);
+  bool tryToLoad(const char *fname, bool * reportedError = 0);
+  bool confirmDiscard(const char * action);
 
   void CreateShapeTab(void);
   void CreateProblemTab(void);
@@ -221,6 +225,8 @@ public:
   using LFl_Double_Window::show;
   void show(int argn, char ** argv);
 
+  void openFromSystem(const char * filename);
+
   // overwrite hide to check for changes in all possible exit situations
   void hide(void);
 
@@ -234,7 +240,7 @@ public:
 
   /* return an index into the main menu array with the given text */
   static int findMenuEntry(const char * txt);
-  static void initViewMenuIcons(void);
+  void initViewMenuIcons(void);
 
   /* the callback functions, as they are called from normal functions we need
    * to make them public, even though they should not be used from the outside
@@ -327,7 +333,7 @@ public:
   void cb_Help(void);
   void cb_Config(void);
   void cb_ToggleNotes(void);
-  void cb_ShowNotes(void);
+  void updateNotesMenuLabel(void);
   void cb_NotesUpdate(void);
   void cb_NotesRevert(void);
   void cb_NotesChanged(void);
@@ -335,6 +341,8 @@ public:
   void relayoutViewStack(void);
   void cb_Toggle3D(void);
   void cb_ViewMode(int mode);
+  void cb_RenderStyle(int mode);
+  void syncRenderStyleMenu(void);
   void cb_SolProbSel(LBlockListGroup_c* reason);
 
   void cb_ShapeGroup(void);

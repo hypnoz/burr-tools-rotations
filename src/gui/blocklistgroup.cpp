@@ -27,7 +27,7 @@
 
 // some tool widgets, that may be swapped out later into another file
 
-static void cb_BlockListGroupList_stub(Fl_Widget* o, void* /*v*/) { ((LBlockListGroup_c*)(o->parent()))->cb_list(); }
+static void cb_BlockListGroupList_stub(Fl_Widget* o, void* /*v*/) { static_cast<LBlockListGroup_c*>(o->parent())->cb_list(); }
 void LBlockListGroup_c::cb_list(void) {
 
   if (List->getReason() == PieceSelector::RS_CHANGEDHIGHT) {
@@ -44,14 +44,21 @@ void LBlockListGroup_c::cb_list(void) {
   }
 }
 
-static void cb_BlockListGroupSlider_stub(Fl_Widget* o, void* /*v*/) { ((LBlockListGroup_c*)(o->parent()))->cb_slider(); }
+static void cb_BlockListGroupSlider_stub(Fl_Widget* o, void* /*v*/) { static_cast<LBlockListGroup_c*>(o->parent())->cb_slider(); }
 void LBlockListGroup_c::cb_slider(void) { List->setShift((int)Slider->value()); }
 
 int LBlockListGroup_c::handle(int event) {
 
   if (event == FL_MOUSEWHEEL) {
+    if (!Fl::event_inside(this))
+      return 0;
+
+    int dy = Fl::event_dy();
     double max = Slider->maximum();
-    double v = Slider->value() + Fl::event_dy() * 24.0;
+    if (dy == 0 || max <= 0)
+      return 0;
+
+    double v = Slider->value() + dy * 24.0;
     if (v < 0) v = 0;
     if (v > max) v = max;
     Slider->value(v);
@@ -62,7 +69,12 @@ int LBlockListGroup_c::handle(int event) {
   return Fl_Group::handle(event);
 }
 
-LBlockListGroup_c::LBlockListGroup_c(int x, int y, int w, int h, BlockList * l) : Fl_Group(0, 0, 100, 100), layoutable_c(x, y, w, h), List(l) {
+LBlockListGroup_c::LBlockListGroup_c(int x, int y, int w, int h, BlockList * l) : Fl_Group(0, 0, 100, 100), layoutable_c(x, y, w, h), Slider(nullptr), List(l), callbackReason(0) {
+
+  /* Preferred height stays large enough to use. The panel may shrink
+   * the list further before a scrollbar appears. */
+  setShrinkMinSize(30, 40);
+  shrinkPrio(128, 0);
 
   box(FL_DOWN_FRAME);
 

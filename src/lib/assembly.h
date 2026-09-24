@@ -299,7 +299,7 @@ public:
    * return true, if this is a non-normal assembly.
    * This is used to drop rotated assemblies
    */
-  bool smallerRotationExists(const problem_c & puz, unsigned int pivot, const mirrorInfo_c * mir, bool complete) const;
+  bool smallerRotationExists(const problem_c & puz, unsigned int pivot, const mirrorInfo_c * mir, bool complete, bool strictColors = false) const;
 
   /**
    * exchange 2 shapes.
@@ -322,9 +322,12 @@ public:
   void sort(const problem_c & puz);
 
   /** calculate a voxelspace that is identical to the assembly with
-   * all pieces put into the space
+   * all pieces put into the space.
+   * The grid is shifted so its minimum corner is at index 0. When the
+   * origin pointers are set, they receive that corner in result space,
+   * so result coordinate = origin + voxel index.
    */
-  voxel_c * createSpace(const problem_c & puz) const;
+  std::unique_ptr<voxel_c> createSpace(const problem_c & puz, int *originX = nullptr, int *originY = nullptr, int *originZ = nullptr) const;
 
   void removePieces(unsigned int from, unsigned int cnt);
 

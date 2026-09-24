@@ -22,35 +22,21 @@
 #define __MODIFIERS_H__
 
 #include <vector>
+
 class Polyhedron;
-/** this class contains a list of faces (voxel+facenumer) pairs */
-class faceList_c {
-
-  private:
-
-    struct face{
-      long voxel;
-      int faceNum;
-    };
-
-    std::vector<face> faces;
-
-  public:
-
-    faceList_c(void) {}
-
-    void addFace(long voxel, int face);
-    void removeFace(long voxel, int face);
-
-    bool containsFace(long voxel, int face) const;
-
-    void clear(void) { faces.clear(); }
-};
 
 void scalePolyhedron(Polyhedron & poly, float val);
+void scalePolyhedron(Polyhedron & poly, float x, float y, float z);
 void fillPolyhedronHoles(Polyhedron &poly, bool fillOutsides);
 
-// inverts the inv polyhedron and adds those faces to poly
-void joinPolyhedronInverse(Polyhedron & poly, const Polyhedron & inv, const faceList_c & holes, float holeSize);
+/* returns a new polyhedron where connected groups of coplanar faces are
+ * merged and retriangulated with fewer, larger triangles. All vertices on
+ * the boundary of such a group are kept, so the result stays watertight
+ * with respect to the faces around the group (no t-junctions). Groups
+ * where the retriangulation fails for some reason keep their original
+ * faces. Faces marked as holes are dropped. The source polyhedron must
+ * have its twin links set (finalize)
+ */
+Polyhedron * mergeCoplanarFaces(const Polyhedron & src);
 
 #endif

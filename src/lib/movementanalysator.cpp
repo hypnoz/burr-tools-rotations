@@ -32,17 +32,68 @@
 #include "rotationmoves_crowell.h"
 #include "solvertype.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <string.h>
 
-/**
- * this function fills the matrix with the movement values of
- * pairs of pieces
- * this is done using the movement cache
- */
+static uint64_t hashPieces(const std::vector<unsigned int> & p) {
+  uint64_t h = p.size();
+  for (unsigned int x : p)
+    h = h * 31 + x;
+  return h;
+}
+
 void movementAnalysator_c::prepare(void) {
 
-  unsigned int * idx = matrix;
+  const unsigned int n = pieces->size();
+  const uint64_t pcsHash = hashPieces(*pieces);
+
+  /* Incremental fast path: if the previous prepare() ran for our parent
+   * node with the same piece subset, only pairs touching moved pieces
+   * can differ. prevSearch is refcounted, hence alive to prevent ABA.
+   * pcsHash and prevN guard against pointer reuse of pieces across different
+   * subproblem stack frames. Orientation (getTrans) is included so rotation
+   * moves still invalidate the inherited matrix. */
+  bool incremental = prevSearch && searchnode && searchnode->getComefrom() == prevSearch
+    && pieces == prevPieces && next_pn == prevN && pcsHash == prevPiecesHash && n > 0;
+
+  std::vector<unsigned int> moved;
+  if (incremental) {
+    for (unsigned int i = 0; i < n; i++)
+      if ((searchnode->getX(i) != prevSearch->getX(i)) ||
+          (searchnode->getY(i) != prevSearch->getY(i)) ||
+          (searchnode->getZ(i) != prevSearch->getZ(i)) ||
+          (searchnode->getTrans(i) != prevSearch->getTrans(i)))
+        moved.push_back(i);
+
+    /* prepareIncremental updates prevFill in-place for touched pairs,
+     * copies it once to matrix, and applies dirty-worklist closure. */
+    prepareIncremental(moved);
+  } else {
+    prepareFill();
+    /* snapshot the FILL matrix: the incremental base must be pre-closure
+     * values (closure only decreases and can never repair upward) */
+    prevFill = matrix;
+    closureFull();
+  }
+
+  /* rotate the refcounted owner for the next call */
+  if (prevSearch != searchnode) {
+    if (prevSearch && prevSearch->decRefCount())
+      delete prevSearch;
+    prevSearch = searchnode;
+    if (prevSearch)
+      prevSearch->incRefCount();
+  }
+  prevPieces = pieces;
+  prevPiecesHash = pcsHash;
+  prevN = next_pn;
+}
+
+void movementAnalysator_c::prepareFill(void) {
+
+  unsigned int * idx = matrix.data();
 
   int idxCol = cache->numDirections();
   int idxRow = cache->numDirections() * (piecenumber- pieces->size());
@@ -62,6 +113,10 @@ void movementAnalysator_c::prepare(void) {
     }
     idx += idxRow;
   }
+
+}
+
+void movementAnalysator_c::closureFull(void) {
 
   /* having a look at this algorithm in more detail
    * it comes out that the first pass has lots to do, the 2nd pass
@@ -117,11 +172,11 @@ void movementAnalysator_c::prepare(void) {
         }
 #endif
 
-      unsigned int * pos1 = matrix + d;           // y * piecenumber;
+      unsigned int * pos1 = matrix.data() + d;           // y * piecenumber;
       unsigned int idx, i;
 
       for (unsigned int y = 0; y < size; y+=dirs) {
-        unsigned int * pos2 = matrix + d;           // x
+        unsigned int * pos2 = matrix.data() + d;           // x
 
         for (unsigned int x = 0; x < size; x+=dirs) {
           unsigned int min = *pos2 + *pos1;
@@ -136,7 +191,7 @@ void movementAnalysator_c::prepare(void) {
 
             if (!again) {
 
-              unsigned int * pos3 = matrix + d;
+              unsigned int * pos3 = matrix.data() + d;
 
               for (i = 0; i < y; i+=dirs) {
                 if (min + pos3[y] < pos3[x]) {
@@ -148,7 +203,7 @@ void movementAnalysator_c::prepare(void) {
 
               if (!again) {
 
-                pos3 = matrix + d + piecenumber*x;
+                pos3 = matrix.data() + d + piecenumber*x;
 
                 for (i = 0; i < x; i+=dirs)
                   if (pos3[i] + min < pos1[i]) {
@@ -167,6 +222,80 @@ void movementAnalysator_c::prepare(void) {
   }
 }
 
+void movementAnalysator_c::prepareIncremental(const std::vector<unsigned int> & moved) {
+
+  const unsigned int n = pieces->size();
+  const unsigned int dirs = cache->numDirections();
+
+  /* Pairs touching a moved piece need fresh cache values; the rest is
+   * already correct from the inherited parent base. Panels of untouched
+   * pairs keep base values since relative offsets, piece identities, and
+   * orientations are unchanged. */
+  std::vector<char> isMoved(n, 0);
+  for (unsigned int m : moved)
+    isMoved[m] = 1;
+
+  if (dirtyRows.size() < (size_t)dirs * n || dirtyCols.size() < (size_t)dirs * n) {
+    dirtyRows.assign((size_t)dirs * n, 0);
+    dirtyCols.assign((size_t)dirs * n, 0);
+  } else {
+    std::fill(dirtyRows.begin(), dirtyRows.end(), 0);
+    std::fill(dirtyCols.begin(), dirtyCols.end(), 0);
+  }
+
+  for (unsigned int j = 0; j < pieces->size(); j++) {
+    for (unsigned int i = 0; i < pieces->size(); i++) {
+      if ((i != j) && (isMoved[i] || isMoved[j]))
+        cache->getMoValue(searchnode->getX(j) - searchnode->getX(i),
+                          searchnode->getY(j) - searchnode->getY(i),
+                          searchnode->getZ(j) - searchnode->getZ(i),
+                          searchnode->getTrans(i), searchnode->getTrans(j),
+                          (*pieces)[i], (*pieces)[j],
+                          &prevFill[((size_t)i + (size_t)j * piecenumber) * dirs]);
+    }
+  }
+  /* Single copy from the updated fill snapshot to working matrix for closure */
+  matrix = prevFill;
+
+  /* Dirty-worklist closure: the first sweep evaluates all triples (the base
+   * is a fresh fill, not a fixpoint); subsequent sweeps only revisit rows
+   * and columns marked by relaxations. This converges to the same least
+   * fixpoint as full iterative relaxation. */
+  for (unsigned int d = 0; d < dirs; d++) {
+    /* at(a,b): movement of a relative to b in direction d, same layout
+     * and unsigned semantics as the full matrix */
+    auto at = [&](unsigned int a, unsigned int b) -> unsigned int & {
+      return matrix[((size_t)a + (size_t)b * piecenumber) * dirs + d];
+    };
+
+    bool changed = true;
+    /* first sweep evaluates everything (base is a fresh fill, not a
+     * fixpoint); later sweeps only revisit marked rows/columns */
+    bool first = true;
+    while (changed) {
+      changed = false;
+      for (unsigned int y = 0; y < n; y++)
+        for (unsigned int x = 0; x < n; x++) {
+          if (!first && !dirtyRows[(size_t)d * n + y] && !dirtyCols[(size_t)d * n + x])
+            continue;
+          unsigned int best = at(x, 0) + at(0, y);
+          for (unsigned int k = 1; k < n; k++) {
+            unsigned int l = at(x, k) + at(k, y);
+            if (l < best)
+              best = l;
+          }
+          if (best < at(x, y)) {
+            at(x, y) = best;
+            dirtyRows[(size_t)d * n + y] = 1;
+            dirtyCols[(size_t)d * n + x] = 1;
+            changed = true;
+          }
+        }
+      first = false;
+    }
+  }
+}
+
 /*
  * suppose you want to move piece x y units into one direction, if you hit another piece
  * on your way and this piece can be moved then it may be nice to also move this piece
@@ -182,12 +311,13 @@ void movementAnalysator_c::prepare(void) {
  */
 bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int nextstep) {
 
+  stats.checkCalls++;
+
   /* we count the number of pieces that need to be moved, if this number
    * gets bigger than halve of the pieces of the current problem we
    * stop and return that this movement is rubbish
    */
   unsigned int moved_pieces = 1;
-  std::vector<char> check(piecenumber, 0);
 
   /* Initialise the movement matrix. We want to move 'nextpiece' 'nextstep' units
    * into the current direction, so we initialise the matrix with all
@@ -195,6 +325,7 @@ bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int ne
    */
   for (int i = 0; i < next_pn; i++) {
     movement[i] = 0;
+    check[i] = false;
   }
   movement[nextpiece] = nextstep;
   check[nextpiece] = true;
@@ -219,7 +350,7 @@ bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int ne
     do {
 
       finished = true;
-      unsigned int * idx = matrix + nd;
+      unsigned int * idx = matrix.data() + nd;
 
       // go over all pieces
       for (int i = 0; i < next_pn; i++)
@@ -271,7 +402,7 @@ bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int ne
     do {
 
       finished = true;
-      unsigned int * idx = matrix + nd;
+      unsigned int * idx = matrix.data() + nd;
 
       for (int i = 0; i < next_pn; i++)
       {
@@ -303,17 +434,25 @@ bool movementAnalysator_c::checkmovement(unsigned int maxPieces, unsigned int ne
     } while (!finished);
   }
 
+  stats.checkSuccess++;
   return true;
 }
 
 movementAnalysator_c::movementAnalysator_c(const problem_c & problem, bool enableRotations,
                                            solverType_e solverType) :
+  cache(problem.getPuzzle().getGridType()->getMovementCache(problem)),
+  matrix(cache ? cache->numDirections() * problem.getNumberOfPieces() * problem.getNumberOfPieces() : 0, 0),
+  movement(problem.getNumberOfPieces()),
+  weights(problem.getNumberOfPieces()),
+  check(problem.getNumberOfPieces(), 0),
   piecenumber(problem.getNumberOfPieces()),
-  checkRotations(false), bricksGrid(false), rotationMoves(0), rotationsActive(false), rotationSearchUs(0),
+  prevFill(matrix.size(), 0),
+  nodes(std::make_unique<countingNodeHash>()),
+  checkRotations(false), bricksGrid(false), rotationsActive(false), rotationSearchUs(0),
   linearSearchUs(0), searchPhaseStartUs(0), searchTimingOpen(false), searchPhaseLinear(true),
+  nextstate(-1),
   maxstep((unsigned int) -1) {
 
-  cache = problem.getPuzzle().getGridType()->getMovementCache(problem);
   /* we assert that there must be a cache, otherwise no disassembly
    * analysis is possible anyway and this should not
    * have been called
@@ -322,30 +461,19 @@ movementAnalysator_c::movementAnalysator_c(const problem_c & problem, bool enabl
 
   bricksGrid = (problem.getPuzzle().getGridType()->getType() == gridType_c::GT_BRICKS);
 
-  /* allocate the necessary arrays */
-  movement = new unsigned int[piecenumber];
-
-  matrix = new unsigned int[cache->numDirections() * piecenumber * piecenumber];
-  memset(matrix, 0, cache->numDirections() * piecenumber * piecenumber * sizeof(unsigned int));
-
   /* create the weights array */
-  weights = new int[problem.getNumberOfPieces()];
   unsigned int pc = 0;
   for (unsigned int i = 0; i < problem.getNumberOfParts(); i++) {
     for (unsigned int j = 0; j < problem.getPartMaximum(i); j++)
       weights[pc++] = problem.getPartShape(i)->getWeight();
   }
 
-  nextstate = -1;
-
-  nodes = new countingNodeHash();
-
   if (bricksGrid) {
     if (solverType == SOLVER_CROWELL)
-      rotationMoves = new rotationMoves_crowell_c(problem, cache);
+      rotationMoves = std::make_unique<rotationMoves_crowell_c>(problem, cache.get());
     else
       /* Classic and BurrTools 2 share the complete 90° generator. */
-      rotationMoves = new rotationMoves_0_c(problem, cache);
+      rotationMoves = std::make_unique<rotationMoves_0_c>(problem, cache.get());
   }
 
   setCheckRotations(enableRotations);
@@ -356,14 +484,8 @@ void movementAnalysator_c::setCheckRotations(bool enable) {
 }
 
 movementAnalysator_c::~movementAnalysator_c() {
-
-  delete [] movement;
-  delete [] matrix;
-
-  delete cache;
-  delete [] weights;
-  delete nodes;
-  delete rotationMoves;
+  if (prevSearch && prevSearch->decRefCount())
+    delete prevSearch;
 }
 
 static int max(int a, int b) { if (a > b) return a; else return b; }
@@ -721,6 +843,7 @@ disassemblerNode_c * movementAnalysator_c::find(void) {
     }
   }
 
+  stats.nodesReturned++;
   return n;
 }
 

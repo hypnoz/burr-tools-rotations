@@ -81,7 +81,7 @@ private:
    * of each shape are there, the shape class contains indices into the
    * shape list of the puzzle and some counters, ...
    */
-  std::vector<part_c *> parts;
+  std::vector<std::unique_ptr<part_c>> parts;
 
   /**
    * the result shape shape as index into the puzzle shapes
@@ -93,10 +93,10 @@ private:
    * in this vector if the user decides to only count, or not keep them
    * all. This vector contains the solutions that were kept
    */
-  std::vector<solution_c*> solutions;
+  std::vector<std::unique_ptr<solution_c>> solutions;
 
   /** protects concurrent access to the solutions vector */
-  mutable std::recursive_mutex solutionsMutex;
+  mutable std::recursive_mutex solutionMutex;
 
   /**
    * When true, saved solutions were produced with Check Rotations and are
@@ -118,7 +118,7 @@ private:
    * if the pointer is 0 we have never started an assembly process within this session
    * statistics can be found in the assembler, too
    */
-  assembler_c * assm;
+  std::unique_ptr<assembler_c> assm;
 
   /**
    * the name of the problem, so that the user can easily select one
@@ -219,7 +219,7 @@ public:
   /**
    * set the name of the problem.
    */
-  void setName(std::string nm) { name = nm; }
+  void setName(const std::string & nm) { name = nm; }
 
   /** \name Result shape handling */
   //@{
@@ -326,8 +326,9 @@ public:
   //@}
 
   /** \name edit color placement constraints.
-   * the color 0 in this functions is always ignored as the placement
-   * of color 0 is always possible
+   * Colour 0 is neutral (no constraint). Unless strict is set, a neutral
+   * voxel on either side may occupy any colour. With strict, a voxel may
+   * only occupy a result voxel of the same colour, neutral included.
    */
   //@{
   /** allow placing pieces of one color into a result color */
@@ -335,7 +336,7 @@ public:
   /** disallow the placing */
   void disallowPlacement(unsigned int pc, unsigned int res);
   /** check if placing is allowed */
-  bool placementAllowed(unsigned int pc, unsigned int res) const;
+  bool placementAllowed(unsigned int pc, unsigned int res, bool strict = false) const;
   //@}
 
   /** \name grouping information.
@@ -400,8 +401,19 @@ public:
   class SolutionsLock {
     std::lock_guard<std::recursive_mutex> guard;
   public:
-    explicit SolutionsLock(const problem_c & p) : guard(p.solutionsMutex) {}
+    explicit SolutionsLock(const problem_c & p) : guard(p.solutionMutex) {}
   };
+
+  /**
+   * Acquire the lock guarding the solution list. A caller that reads a saved
+   * solution while the solver thread might be running must hold this across
+   * the whole read (and any copy it makes of the solution), so the solver can
+   * not delete or reallocate the list underneath it. Returns a movable RAII
+   * lock; keep it alive for the duration of the access.
+   */
+  std::unique_lock<std::recursive_mutex> lockSolutions(void) const {
+    return std::unique_lock<std::recursive_mutex>(solutionMutex);
+  }
 
   /**
    * remove all known solutions, reset time, counter, assembler.
@@ -423,11 +435,11 @@ public:
    * The set assembler will be reset to a saved state, when that information is
    * available. If not simply set the assembler
    */
-  assembler_c::errState setAssembler(assembler_c * assm);                       // startSolving
+  assembler_c::errState setAssembler(std::unique_ptr<assembler_c> assm);
   /** get the assembler */
-  assembler_c * getAssembler(void) { return assm; }
+  assembler_c * getAssembler(void) { return assm.get(); }
   /** get the assembler */
-  const assembler_c * getAssembler(void) const { return assm; }
+  const assembler_c * getAssembler(void) const { return assm.get(); }
   /** call this for each found assembly */
   void incNumAssemblies(void) { bt_assert(solveState == SS_SOLVING); numAssemblies.fetch_add(1, std::memory_order_relaxed); }
   /** call this for each found solution */
@@ -468,6 +480,11 @@ public:
   //@{
   /** find out how far we are with solving (no, started, finished) */
   solveState_e getSolveState(void) const { return solveState; }
+  /** true when setAssembler() will accept a new or resumed run */
+  bool canStartSolving(void) const {
+    return solveState == SS_UNSOLVED ||
+           (solveState == SS_SOLVING && (assm != nullptr || assemblerState.length() != 0));
+  }
   /** find out if we have an idea about the number of assemblies */
   bool numAssembliesKnown(void) const { return solveState != SS_UNSOLVED; }
   /** get number of assemblies found so far. Throws an exception, when not known */
@@ -490,8 +507,8 @@ public:
   bool getSolutionsWithRotations(void) const { return solutionsWithRotations; }
   void setSolutionsWithRotations(bool v) { solutionsWithRotations = v; }
 
-  const solution_c * getSavedSolution(unsigned int sol) const { bt_assert(sol < solutions.size()); return solutions[sol]; }
-  solution_c * getSavedSolution(unsigned int sol) { bt_assert(sol < solutions.size()); return solutions[sol]; }
+  const solution_c * getSavedSolution(unsigned int sol) const { bt_assert(sol < solutions.size()); return solutions[sol].get(); }
+  solution_c * getSavedSolution(unsigned int sol) { bt_assert(sol < solutions.size()); return solutions[sol].get(); }
   //@}
 
 
@@ -507,13 +524,13 @@ public:
   void sortSolutionsBySolverMethod(int method);
   //@}
 
-private:
+public:
 
   void dedupeRotatedAssemblies(void);
 
   // no copying and assigning
-  problem_c(const problem_c&);
-  void operator=(const problem_c&);
+  problem_c(const problem_c&) = delete;
+  problem_c& operator=(const problem_c&) = delete;
 
 };
 

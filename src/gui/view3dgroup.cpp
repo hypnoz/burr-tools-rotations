@@ -35,14 +35,14 @@ const double LView3dGroup::defaultZoom = 3.2;
 
 // some tool widgets, that may be swapped out later into another file
 
-static void cb_View3dGroupSlider_stub(Fl_Widget* o, void* /*v*/) { ((LView3dGroup*)(o->parent()))->cb_slider(); }
+static void cb_View3dGroupSlider_stub(Fl_Widget* o, void* /*v*/) { static_cast<LView3dGroup*>(o->parent())->cb_slider(); }
 
 void LView3dGroup::cb_slider(void) {
   View3D->setSize(exp(6-slider->value()));
 }
 
-static void cb_View3dGroupVoxel_stub(Fl_Widget* o, void* /*v*/) { ((LView3dGroup*)(o->parent()))->do_callback(); }
-static void cb_View3dHome_stub(Fl_Widget* /*o*/, void* v) { ((LView3dGroup*)v)->goHome(); }
+static void cb_View3dGroupVoxel_stub(Fl_Widget* o, void* /*v*/) { static_cast<LView3dGroup*>(o->parent())->do_callback(); }
+static void cb_View3dHome_stub(Fl_Widget* /*o*/, void* v) { static_cast<LView3dGroup*>(v)->goHome(); }
 
 LView3dGroup::LView3dGroup(int x, int y, int w, int h) : Fl_Group(0, 0, 50, 50), layoutable_c(x, y, w, h) {
 
@@ -90,14 +90,18 @@ int LView3dGroup::handle(int event) {
     int dy = Fl::event_dy();
     if (config.reverseScrollZoom())
       dy = -dy;
-    slider->value(slider->value() + 0.1 * dy);
-    View3D->setSize(exp(6 - slider->value()));
+    double v = slider->value() + 0.1 * dy;
+    if (v < slider->minimum()) v = slider->minimum();
+    if (v > slider->maximum()) v = slider->maximum();
+    slider->value(v);
+    View3D->setSize(exp(6 - v));
     return 1;
   }
 
   return Fl_Group::handle(event);
 }
 
+// cppcheck-suppress duplInheritedMember
 void LView3dGroup::redraw(void)
 {
   View3D->redraw();

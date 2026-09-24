@@ -81,10 +81,12 @@ public:
     sqedit->setColor(num);
   }
 
+  // cppcheck-suppress duplInheritedMember
   void deactivate(void) {
     sqedit->deactivate();
   }
 
+  // cppcheck-suppress duplInheritedMember
   void activate(void) {
     sqedit->activate();
   }
@@ -103,7 +105,7 @@ public:
 
   virtual void getMinSize(int *width, int *height) const {
     *width = 40;
-    *height = 20;
+    *height = 160;
   }
 };
 

@@ -21,7 +21,19 @@
 #ifndef __DISASSEMBLER_HASHES_H__
 #define __DISASSEMBLER_HASHES_H__
 
+#include <unordered_set>
+#include <vector>
+
 class disassemblerNode_c;
+
+/** hash/equality for node pointers: hash and compare by node value */
+struct disassemblerNodePtrHash {
+  size_t operator()(const disassemblerNode_c * n) const noexcept;
+};
+
+struct disassemblerNodePtrEqual {
+  bool operator()(const disassemblerNode_c * a, const disassemblerNode_c * b) const noexcept;
+};
 
 
 /**
@@ -34,14 +46,8 @@ class nodeHash {
 
   private:
 
-    /** current table size */
-    unsigned long tab_size;
-
-    /** current number of entries */
-    unsigned long tab_entries;
-
-    /** the hashtable */
-    disassemblerNode_c ** tab;
+    /** the hashtable: node pointers hashed/compared by node value */
+    std::unordered_set<disassemblerNode_c*, disassemblerNodePtrHash, disassemblerNodePtrEqual> tab;
 
   public:
 
@@ -66,8 +72,8 @@ class nodeHash {
   private:
 
     // no copying and assigning
-    nodeHash(const nodeHash&);
-    void operator=(const nodeHash&);
+    nodeHash(const nodeHash&) = delete;
+    nodeHash& operator=(const nodeHash&) = delete;
 };
 
 
@@ -86,39 +92,15 @@ class countingNodeHash {
 
   private:
 
-    /** current table size */
-    unsigned long tab_size;
-    /** current number of entries */
-    unsigned long tab_entries;
+    /** the hashtable: node pointers hashed/compared by node value */
+    std::unordered_set<disassemblerNode_c*, disassemblerNodePtrHash, disassemblerNodePtrEqual> tab;
+    /** insertion order (oldest first); backing for the reverse-order scan */
+    std::vector<disassemblerNode_c*> order;
 
-    /**
-     * hash node data structure
-     *
-     * this hash table is non intrusive, it stores a pointer
-     * to the disassembler node.
-     *
-     * This is more suitable here because the nodes normally live only
-     * a short time inside this table, while they stay for a very long
-     * time in the other table
-     */
-    struct hashNode {
-      /** the data of the node */
-      disassemblerNode_c * dat;
-      /** next entry in the bucket list */
-      hashNode * next;
-      /** the next entry of the all element link list */
-      hashNode * link;
-    };
-
-    /** the hash table */
-    hashNode ** tab;
-    /** pointer to the inverse linked list of all added elements */
-    hashNode * linkStart;
-
-    /** current scan position */
-    hashNode * scanPtr;
+    /** current scan position: index of the next element of order to return */
+    size_t scanPos = 0;
     /** is there a scan active? */
-    bool scanActive;
+    bool scanActive = false;
 
   public:
 
@@ -157,8 +139,8 @@ class countingNodeHash {
   private:
 
     // no copying and assigning
-    countingNodeHash(const countingNodeHash&);
-    void operator=(const countingNodeHash&);
+    countingNodeHash(const countingNodeHash&) = delete;
+    countingNodeHash& operator=(const countingNodeHash&) = delete;
 };
 
 #endif

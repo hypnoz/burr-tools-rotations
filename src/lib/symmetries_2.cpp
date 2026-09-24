@@ -77,7 +77,6 @@ bool symmetries_2_c::symmetryContainsMirror(symmetries_t sym) const {
 unsigned char symmetries_2_c::transAdd(unsigned char t1, unsigned char t2) const {
   bt_assert(t1 < NUM_TRANSFORMATIONS_MIRROR);
   bt_assert(t2 < NUM_TRANSFORMATIONS_MIRROR);
-  bt_assert(transMult[t1][t2] < NUM_TRANSFORMATIONS_MIRROR);
   return transMult[t1][t2];
 }
 
@@ -145,7 +144,7 @@ bool symmetries_2_c::symmetryKnown(const voxel_c * pp) const {
     if (symmetries[i] == s)
       break;
 
-  return symmetries[i] == s;
+  return i < NUM_SYMMETRY_GROUPS;
 }
 
 symmetries_t symmetries_2_c::calculateSymmetry(const voxel_c *pp) const {

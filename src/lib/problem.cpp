@@ -72,33 +72,22 @@ class part_c {
 problem_c::problem_c(puzzle_c & puz) :
   puzzle(puz), result(0xFFFFFFFF),
   solutionsWithRotations(false),
-  assm(0),solveState(SS_UNSOLVED), numAssemblies(0),
+  solveState(SS_UNSOLVED), numAssemblies(0),
   numSolutions(0), usedTime(0), maxHoles(0xFFFFFFFF)
 {}
 
-problem_c::~problem_c(void) {
-  for (unsigned int i = 0; i < solutions.size(); i++)
-    delete solutions[i];
-
-  for (unsigned int i = 0; i < parts.size(); i++)
-    delete parts[i];
-
-  if (assm)
-    delete assm;
-}
+problem_c::~problem_c(void) = default;
 
 problem_c::problem_c(const problem_c * orig, puzzle_c & puz) :
   puzzle(puz), result(orig->result),
   solutionsWithRotations(false),
   solveState(SS_UNSOLVED), numAssemblies(0), numSolutions(0), usedTime(0)
 {
-  assm = 0;
-
-  for (std::set<uint32_t>::iterator i = orig->colorConstraints.begin(); i != orig->colorConstraints.end(); i++)
+  for (std::set<uint32_t>::iterator i = orig->colorConstraints.begin(); i != orig->colorConstraints.end(); ++i)
     colorConstraints.insert(*i);
 
   for (unsigned int i = 0; i < orig->parts.size(); i++)
-    parts.push_back(new part_c(orig->parts[i]));
+    parts.push_back(std::make_unique<part_c>(orig->parts[i].get()));
 
   maxHoles = orig->maxHoles;
 
@@ -179,7 +168,7 @@ void problem_c::save(xmlWriter_c & xml) const
   xml.endTag("result");
 
   xml.newTag("bitmap");
-  for (std::set<uint32_t>::iterator i = colorConstraints.begin(); i != colorConstraints.end(); i++)
+  for (std::set<uint32_t>::iterator i = colorConstraints.begin(); i != colorConstraints.end(); ++i)
   {
     xml.newTag("pair");
     xml.newAttrib("piece", *i >> 16);
@@ -218,7 +207,7 @@ void problem_c::save(xmlWriter_c & xml) const
 }
 
 problem_c::problem_c(puzzle_c & puz, xmlParser_c & pars) : puzzle(puz), result(0xFFFFFFFF),
-  solutionsWithRotations(false), assm(0)
+  solutionsWithRotations(false)
 {
   pars.require(xmlParser_c::START_TAG, "problem");
 
@@ -303,7 +292,7 @@ problem_c::problem_c(puzzle_c & puz, xmlParser_c & pars) : puzzle(puz), result(0
 
           if (grp)
           {
-            parts.push_back(new part_c(id, min, max, grp));
+            parts.push_back(std::make_unique<part_c>(id, min, max, grp));
             pars.skipSubTree();
           }
           else
@@ -314,7 +303,7 @@ problem_c::problem_c(puzzle_c & puz, xmlParser_c & pars) : puzzle(puz), result(0
              * tags inside the tag. Each of the group tag gives a
              * group and a count
              */
-            parts.push_back(new part_c(id, min, max));
+            parts.push_back(std::make_unique<part_c>(id, min, max));
 
             do
             {
@@ -369,8 +358,6 @@ problem_c::problem_c(puzzle_c & puz, xmlParser_c & pars) : puzzle(puz), result(0
       if (fromRotations) {
         /* Prefer the rotation-aware block; drop any classic solutions already read */
         solutionsWithRotations = true;
-        for (unsigned int i = 0; i < solutions.size(); i++)
-          delete solutions[i];
         solutions.clear();
       } else if (solutionsWithRotations) {
         /* Classic block is ignored once rotation solutions are present */
@@ -387,7 +374,7 @@ problem_c::problem_c(puzzle_c & puz, xmlParser_c & pars) : puzzle(puz), result(0
         pars.require(xmlParser_c::START_TAG, "");
 
         if (pars.getName() == "solution")
-          solutions.push_back(new solution_c(pars, pieces, puzzle.getGridType()));
+          solutions.push_back(std::make_unique<solution_c>(pars, pieces, puzzle.getGridType()));
         else
           pars.skipSubTree();
 
@@ -485,7 +472,6 @@ void problem_c::dedupeRotatedAssemblies(void) {
       }
 
     if (drop) {
-      delete solutions[i];
       solutions.erase(solutions.begin()+i);
     } else
       i++;
@@ -556,12 +542,19 @@ void problem_c::disallowPlacement(unsigned int pc, unsigned int res) {
     colorConstraints.erase(i);
 }
 
-bool problem_c::placementAllowed(unsigned int pc, unsigned int res) const {
+bool problem_c::placementAllowed(unsigned int pc, unsigned int res, bool strict) const {
   bt_assert(pc <= puzzle.colorNumber());
   bt_assert(res <= puzzle.colorNumber());
 
   if (puzzle.colorNumber() == 0)
     return true;
+
+  /* Strict: the piece voxel colour must be the result voxel colour.
+   * Neutral only matches neutral, and a coloured voxel does not also
+   * match a neutral result voxel.
+   */
+  if (strict)
+    return pc == res;
 
   return (pc == 0) || (res == 0) || (colorConstraints.find((pc-1) << 16 | (res-1)) != colorConstraints.end());
 }
@@ -597,9 +590,7 @@ void problem_c::exchangeParts(unsigned int partId1, unsigned int partId2) {
 
   bt_assert(p1Start+p1Count == p2Start);
 
-  part_c * s = parts[partId1];
-  parts[partId1] = parts[partId2];
-  parts[partId2] = s;
+  std::swap(parts[partId1], parts[partId2]);
 
   /* this vector holds the target position of all the involved piece
    * as long as its not in the order 0, 1, 2, ... some pieces must be exchanged
@@ -691,7 +682,6 @@ void problem_c::setShapeMinimum(unsigned int shape, unsigned int count)
         {
           if (!solutions[s]->getAssembly()->isPlaced(pieceIdx+count-1))
           {
-            delete solutions[s];
             solutions.erase(solutions.begin()+s);
           }
           else
@@ -709,7 +699,7 @@ void problem_c::setShapeMinimum(unsigned int shape, unsigned int count)
   // when we get here there is no piece with the required puzzle shape, so add it
   if (count)
   {
-    parts.push_back(new part_c(shape, count, count, 0));
+    parts.push_back(std::make_unique<part_c>(shape, count, count, 0));
 
     // add new placements, pieces are not placed
     for (unsigned int s = 0; s < solutions.size(); s++)
@@ -738,7 +728,6 @@ void problem_c::setShapeMaximum(unsigned int shape, unsigned int count)
         {
           if (solutions[s]->getAssembly()->isPlaced(pieceIdx))
           {
-            delete solutions[s];
             solutions.erase(solutions.begin()+s);
           }
           else
@@ -775,7 +764,6 @@ void problem_c::setShapeMaximum(unsigned int shape, unsigned int count)
           if (solutions[s]->getAssembly()->isPlaced(pieceIdx+parts[id]->max-1))
           {
             // too many pieces placed -> delete solution
-            delete solutions[s];
             solutions.erase(solutions.begin()+s);
           }
           else
@@ -797,7 +785,7 @@ void problem_c::setShapeMaximum(unsigned int shape, unsigned int count)
 
   if (count)
   {
-    parts.push_back(new part_c(shape, 0, count, 0));
+    parts.push_back(std::make_unique<part_c>(shape, 0, count, 0));
 
     // add new placements, pieces are not placed
     for (unsigned int s = 0; s < solutions.size(); s++)
@@ -894,8 +882,8 @@ void problem_c::addSolution(assembly_c * assm, unsigned long assemblyNumber) {
   bt_assert(assm);
   bt_assert(solveState == SS_SOLVING);
 
-  std::lock_guard<std::recursive_mutex> lock(solutionsMutex);
-  solutions.push_back(new solution_c(assm, (unsigned int)assemblyNumber));
+  std::lock_guard<std::recursive_mutex> guard(solutionMutex);
+  solutions.push_back(std::make_unique<solution_c>(assm, (unsigned int)assemblyNumber));
 }
 
 void problem_c::addSolution(assembly_c * assm, separation_c * disasm, unsigned int pos) {
@@ -909,12 +897,12 @@ void problem_c::addSolution(assembly_c * assm, separation_c * disasm, unsigned l
   bt_assert(assm);
   bt_assert(solveState == SS_SOLVING);
 
-  std::lock_guard<std::recursive_mutex> lock(solutionsMutex);
+  std::lock_guard<std::recursive_mutex> lock(solutionMutex);
 
   if (pos < solutions.size())
-    solutions.insert(solutions.begin()+pos, new solution_c(assm, (unsigned int)assemblyNumber, disasm, (unsigned int)solutionNumber));
+    solutions.insert(solutions.begin()+pos, std::make_unique<solution_c>(assm, (unsigned int)assemblyNumber, disasm, (unsigned int)solutionNumber));
   else
-    solutions.push_back(new solution_c(assm, (unsigned int)assemblyNumber, disasm, (unsigned int)solutionNumber));
+    solutions.push_back(std::make_unique<solution_c>(assm, (unsigned int)assemblyNumber, disasm, (unsigned int)solutionNumber));
 }
 
 void problem_c::addSolution(assembly_c * assm, separationInfo_c * disasm, unsigned int pos) {
@@ -928,22 +916,19 @@ void problem_c::addSolution(assembly_c * assm, separationInfo_c * disasm, unsign
   bt_assert(assm);
   bt_assert(solveState == SS_SOLVING);
 
-  std::lock_guard<std::recursive_mutex> lock(solutionsMutex);
+  std::lock_guard<std::recursive_mutex> lock(solutionMutex);
 
   if (pos < solutions.size())
-    solutions.insert(solutions.begin()+pos, new solution_c(assm, (unsigned int)assemblyNumber, disasm, (unsigned int)solutionNumber));
+    solutions.insert(solutions.begin()+pos, std::make_unique<solution_c>(assm, (unsigned int)assemblyNumber, disasm, (unsigned int)solutionNumber));
   else
-    solutions.push_back(new solution_c(assm, (unsigned int)assemblyNumber, disasm, (unsigned int)solutionNumber));
+    solutions.push_back(std::make_unique<solution_c>(assm, (unsigned int)assemblyNumber, disasm, (unsigned int)solutionNumber));
 }
 
 void problem_c::removeAllSolutions(void) {
-  std::lock_guard<std::recursive_mutex> lock(solutionsMutex);
-  for (unsigned int i = 0; i < solutions.size(); i++)
-    delete solutions[i];
+  std::lock_guard<std::recursive_mutex> guard(solutionMutex);
   solutions.clear();
   solutionsWithRotations = false;
-  delete assm;
-  assm = 0;
+  assm.reset();
   assemblerState = "";
   solveState = SS_UNSOLVED;
   numAssemblies.store(0, std::memory_order_relaxed);
@@ -952,24 +937,34 @@ void problem_c::removeAllSolutions(void) {
 }
 
 void problem_c::removeSolution(unsigned int sol) {
-  std::lock_guard<std::recursive_mutex> lock(solutionsMutex);
+  std::lock_guard<std::recursive_mutex> lock(solutionMutex);
   bt_assert(sol < solutions.size());
-  delete solutions[sol];
   solutions.erase(solutions.begin()+sol);
 }
 
-assembler_c::errState problem_c::setAssembler(assembler_c * assm) {
-
-
+assembler_c::errState problem_c::setAssembler(std::unique_ptr<assembler_c> a) {
   if (assemblerState.length()) {
-
     bt_assert(solveState == SS_SOLVING);
 
     // if we have some assembler position data, try to load that
-    assembler_c::errState err = assm->setPosition(assemblerState.c_str(), assemblerVersion.c_str());
+    assembler_c::errState err = a->setPosition(assemblerState.c_str(), assemblerVersion.c_str());
 
     // when we could not load, return with error and reset to unsolved
     if (err != assembler_c::ERR_NONE) {
+
+      /* A parallel search that was interrupted saves no usable resume point.
+       * The partial results that are here came from a search that can only be
+       * redone from the start, and keeping them would mean the next run
+       * reports all of them a second time. So drop them, and clear the saved
+       * state as well so the next solve starts from a clean slate rather than
+       * failing on the same unusable data for ever.
+       */
+      if (err == assembler_c::ERR_CAN_NOT_RESTORE_INTERRUPTED) {
+        removeAllSolutions();
+        assemblerVersion = "";
+        return err;
+      }
+
       solveState = SS_UNSOLVED;
       return err;
     }
@@ -988,7 +983,7 @@ assembler_c::errState problem_c::setAssembler(assembler_c * assm) {
     solveState = SS_SOLVING;
   }
 
-  this->assm = assm;
+  this->assm = std::move(a);
   return assembler_c::ERR_NONE;
 }
 
@@ -1036,13 +1031,12 @@ unsigned int problem_c::getPartIdToPieceId(unsigned int pieceId) const {
 
   unsigned int shape = 0;
 
-  bt_assert(shape < parts.size());
-
-  while (pieceId >= parts[shape]->max) {
+  while (shape < parts.size() && pieceId >= parts[shape]->max) {
     pieceId -= parts[shape]->max;
     shape++;
-    bt_assert(shape < parts.size());
   }
+
+  bt_assert(shape < parts.size());
 
   return shape;
 }
@@ -1051,47 +1045,46 @@ unsigned int problem_c::getPartIndexToPieceId(unsigned int pieceId) const {
 
   unsigned int shape = 0;
 
-  bt_assert(shape < parts.size());
-
-  while (pieceId >= parts[shape]->max) {
+  while (shape < parts.size() && pieceId >= parts[shape]->max) {
     pieceId -= parts[shape]->max;
     shape++;
-    bt_assert(shape < parts.size());
   }
+
+  bt_assert(shape < parts.size());
 
   return pieceId;
 }
 
-static bool comp_0_assembly(const solution_c * s1, const solution_c * s2)
+static bool comp_0_assembly(const std::unique_ptr<solution_c> & s1, const std::unique_ptr<solution_c> & s2)
 {
   return s1->getAssemblyNumber() < s2->getAssemblyNumber();
 }
 
-static bool comp_1_level(solution_c * s1, solution_c * s2)
+static bool comp_1_level(const std::unique_ptr<solution_c> & s1, const std::unique_ptr<solution_c> & s2)
 {
   return s1->getDisassemblyInfo() && s2->getDisassemblyInfo() &&
       (s1->getDisassemblyInfo()->compare(s2->getDisassemblyInfo()) < 0);
 }
 
-static bool comp_2_moves(solution_c * s1, solution_c * s2)
+static bool comp_2_moves(const std::unique_ptr<solution_c> & s1, const std::unique_ptr<solution_c> & s2)
 {
   return s1->getDisassemblyInfo() && s2->getDisassemblyInfo() &&
       (s1->getDisassemblyInfo()->sumMoves() < s2->getDisassemblyInfo()->sumMoves());
 }
 
-static bool comp_3_pieces(const solution_c * s1, const solution_c * s2)
+static bool comp_3_pieces(const std::unique_ptr<solution_c> & s1, const std::unique_ptr<solution_c> & s2)
 {
   return s1->getAssembly()->comparePieces(s2->getAssembly()) > 0;
 }
 
-static bool comp_srt_unsort(const solution_c * s1, const solution_c * s2)
+static bool comp_srt_unsort(const std::unique_ptr<solution_c> & s1, const std::unique_ptr<solution_c> & s2)
 {
   if (s1->getSolutionNumber() != s2->getSolutionNumber())
     return s1->getSolutionNumber() > s2->getSolutionNumber();
   return s1->getAssemblyNumber() > s2->getAssemblyNumber();
 }
 
-static bool comp_srt_moves_desc(const solution_c * s1, const solution_c * s2)
+static bool comp_srt_moves_desc(const std::unique_ptr<solution_c> & s1, const std::unique_ptr<solution_c> & s2)
 {
   const disassembly_c * d1 = s1->getDisassemblyInfo();
   const disassembly_c * d2 = s2->getDisassemblyInfo();
@@ -1104,7 +1097,7 @@ static bool comp_srt_moves_desc(const solution_c * s1, const solution_c * s2)
   return comp_srt_unsort(s1, s2);
 }
 
-static bool comp_srt_level_desc(const solution_c * s1, const solution_c * s2)
+static bool comp_srt_level_desc(const std::unique_ptr<solution_c> & s1, const std::unique_ptr<solution_c> & s2)
 {
   const disassembly_c * d1 = s1->getDisassemblyInfo();
   const disassembly_c * d2 = s2->getDisassemblyInfo();
@@ -1117,7 +1110,7 @@ static bool comp_srt_level_desc(const solution_c * s1, const solution_c * s2)
   return comp_srt_unsort(s1, s2);
 }
 
-static bool comp_srt_rotations_desc(const solution_c * s1, const solution_c * s2)
+static bool comp_srt_rotations_desc(const std::unique_ptr<solution_c> & s1, const std::unique_ptr<solution_c> & s2)
 {
   const disassembly_c * d1 = s1->getDisassemblyInfo();
   const disassembly_c * d2 = s2->getDisassemblyInfo();
@@ -1132,7 +1125,7 @@ static bool comp_srt_rotations_desc(const solution_c * s1, const solution_c * s2
 
 
 void problem_c::sortSolutions(int by) {
-  std::lock_guard<std::recursive_mutex> lock(solutionsMutex);
+  std::lock_guard<std::recursive_mutex> lock(solutionMutex);
   switch (by) {
     case 0: stable_sort(solutions.begin(), solutions.end(), comp_0_assembly); break;
     case 1: stable_sort(solutions.begin(), solutions.end(), comp_1_level   ); break;
@@ -1142,7 +1135,7 @@ void problem_c::sortSolutions(int by) {
 }
 
 void problem_c::sortSolutionsBySolverMethod(int method) {
-  std::lock_guard<std::recursive_mutex> lock(solutionsMutex);
+  std::lock_guard<std::recursive_mutex> lock(solutionMutex);
   switch (method) {
     case 0: stable_sort(solutions.begin(), solutions.end(), comp_srt_unsort); break;
     case 1: stable_sort(solutions.begin(), solutions.end(), comp_srt_moves_desc); break;
@@ -1161,8 +1154,7 @@ void problem_c::makeUnknown(void)
 {
   solveState = SS_UNKNOWN;
 
-  if (assm) delete assm;
-  assm = 0;
+  assm.reset();
   assemblerState = "";
   assemblerVersion = "";
 

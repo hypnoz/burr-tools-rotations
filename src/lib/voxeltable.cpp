@@ -23,30 +23,13 @@
 #include "voxel.h"
 #include "puzzle.h"
 
+#include <memory>
+
 voxelTable_c::voxelTable_c(void)
 {
-  tableSize = 101;
-  hashTable = new hashNode*[tableSize];
-
-  for (unsigned long i = 0; i < tableSize; i++)
-    hashTable[i] = 0;
-
-  tableEntries = 0;
 }
 
 voxelTable_c::~voxelTable_c(void) {
-
-  for (unsigned int i = 0; i < tableSize; i++) {
-    while (hashTable[i]) {
-
-      hashNode * n = hashTable[i];
-      hashTable[i] = n->next;
-
-      delete n;
-    }
-  }
-
-  delete [] hashTable;
 }
 
 static unsigned long calcHashValue(const voxel_c * v)
@@ -102,25 +85,24 @@ bool voxelTable_c::getSpace(const voxel_c *v, unsigned int *index, unsigned char
 {
   unsigned long hash = (params & PAR_COLOUR) ? calcColourHashValue(v) : calcHashValue(v);
 
-  hashNode * n = hashTable[hash % tableSize];
+  auto range = hashTable.equal_range(hash);
 
-  while (n)
+  for (auto it = range.first; it != range.second; ++it)
   {
-    if (n->hash == hash && ((params & PAR_MIRROR) || (n->transformation < v->getGridType()->getSymmetries()->getNumTransformations())))
+    const tableEntry & n = it->second;
+    if ((params & PAR_MIRROR) || (n.transformation < v->getGridType()->getSymmetries()->getNumTransformations()))
     {
-      voxel_c * v2 = v->getGridType()->getVoxel(findSpace(n->index));
-      bool found = v2->transform(n->transformation) && v->identicalInBB(v2, false);
-      delete v2;
+      std::unique_ptr<voxel_c> v2(v->getGridType()->getVoxel(findSpace(n.index)));
+      bool found = v2->transform(n.transformation) && v->identicalInBB(v2.get(), false);
 
       if (found)
       {
-        if (index) *index = n->index;
-        if (trans) *trans = n->transformation;
+        if (index) *index = n.index;
+        if (trans) *trans = n.transformation;
 
         return true;
       }
     }
-    n = n->next;
   }
 
   return false;
@@ -138,52 +120,19 @@ void voxelTable_c::addSpace(unsigned int index, unsigned int params)
 
   symmetries_t sym = v->selfSymmetries();
 
-  if (tableEntries >= tableSize) {
-    // rehash table
-
-    unsigned long newSize = 3*tableSize + 1;
-    hashNode ** t2 = new hashNode * [newSize];
-
-    for (unsigned long i = 0; i < newSize; i++)
-      t2[i] = 0;
-
-    for (unsigned int i = 0; i < tableSize; i++) {
-      while (hashTable[i]) {
-        hashNode * n = hashTable[i];
-        hashTable[i] = n->next;
-
-        n->next = t2[n->hash % newSize];
-        t2[n->hash % newSize] = n;
-      }
-    }
-
-    delete [] hashTable;
-    hashTable = t2;
-    tableSize = newSize;
-  }
-
   for (unsigned char trans = 0; trans < endTrans; trans++) {
     if (symm->isTransformationUnique(sym, trans)) {
       // add all transformations of the voxel space to the table, that are actually different
 
-      voxel_c * v2 = v->getGridType()->getVoxel(v);
+      std::unique_ptr<voxel_c> v2(v->getGridType()->getVoxel(v));
       if (v2->transform(trans))
       {
-        unsigned long hash = (params & PAR_COLOUR) ? calcColourHashValue(v2) : calcHashValue(v2);
+        unsigned long hash = (params & PAR_COLOUR) ? calcColourHashValue(v2.get()) : calcHashValue(v2.get());
 
-        hashNode * n = new hashNode;
-        n->index = index;
-        n->transformation = trans;
-        n->hash = hash;
-        n->next = hashTable[hash % tableSize];
-        hashTable[hash % tableSize] = n;
-        tableEntries++;
+        hashTable.emplace(hash, tableEntry{index, trans});
       }
-
-      delete v2;
     }
   }
 }
 
 const voxel_c * voxelTablePuzzle_c::findSpace(unsigned int index) const { return puzzle->getShape(index); }
-

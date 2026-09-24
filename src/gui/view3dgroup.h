@@ -48,6 +48,7 @@ public:
   void resetZoomToDefault(void) { setZoom(defaultZoom); }
   void goHome(void);
 
+  // cppcheck-suppress duplInheritedMember
   void redraw(void);
 
   voxelFrame_c * getView(void) { return View3D; }

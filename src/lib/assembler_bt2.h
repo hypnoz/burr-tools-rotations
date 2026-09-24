@@ -26,6 +26,7 @@
 #include "bt2_dancingcells.h"
 
 #include <atomic>
+#include <memory>
 #include <vector>
 #include <set>
 #include <stack>
@@ -119,8 +120,8 @@ private:
    * the pos value contains the number of pieces placed
    */
   unsigned int pos;
-  unsigned int *rows;
-  unsigned int *columns;
+  std::vector<unsigned int> rows;
+  std::vector<unsigned int> columns;
 
   void iterativeMultiSearch(void);
 
@@ -194,7 +195,10 @@ private:
   bool avoidTransformedAssemblies;
   bool rotationFilterActive;
   unsigned int avoidTransformedPivot;
-  mirrorInfo_c * avoidTransformedMirror;
+  /* shared with the clones made by clonePrepared()/splitSearch(): they all
+   * filter against the same mirror information, and it lives until the last
+   * of them is gone */
+  std::shared_ptr<mirrorInfo_c> avoidTransformedMirror;
 
   /// set to true, when complete rotation analysis is requested
   bool complete;
@@ -211,9 +215,6 @@ private:
   void buildCells(void);
   void solutionFromRowNodes(const unsigned int * rowNodes, unsigned int n);
   static void cellsSolutionThunk(void * user, const unsigned int * rowIds, unsigned int n);
-
-  /* Clones share avoidTransformedMirror; only the owner deletes it. */
-  bool ownAvoidTransformedMirror;
 
   /* Other assembler_bt2_c workers searching disjoint split branches. */
   std::vector<assembler_bt2_c *> progressPeers;
@@ -280,7 +281,7 @@ protected:
    * rotations it should call this function. This will then add an additional check
    * for each found assembly
    */
-  void checkForTransformedAssemblies(unsigned int pivot, mirrorInfo_c * mir);
+  void checkForTransformedAssemblies(unsigned int pivot, std::unique_ptr<mirrorInfo_c> mir);
 
 public:
 
@@ -288,34 +289,35 @@ public:
   ~assembler_bt2_c(void);
 
   /* functions that are overloaded from assembler_c, for comments see there */
-  errState createMatrix(bool keepMirror, bool keepRotations, bool complete);
-  void applySolutionFilterFlags(bool keepMirror, bool keepRotations, bool complete);
-  void assemble(assembler_cb * callback);
-  assembler_c * clonePrepared(void);
-  assembler_c * splitSearch(void);
-  bool searchFinished(void) const;
-  unsigned int remainingSearchWork(void) const;
-  void assembleLimited(assembler_cb * callback, unsigned int iterationBudget);
-  void addIterations(unsigned long n);
-  void addProgressPeer(assembler_c * peer);
-  void clearProgressPeers(void);
-  int getErrorsParam(void) { return errorsParam; }
-  virtual float getFinished(void) const;
-  virtual void stop(void);
-  virtual bool stopped(void) const { return !running; }
-  virtual errState setPosition(const char * string, const char * version);
-  virtual void save(xmlWriter_c & xml) const;
-  virtual void reduce(void);
-  virtual unsigned int getReducePiece(void) const { return reducePiece; }
-  virtual unsigned long getIterations(void);
+  using assembler_c::assemble;
+  errState createMatrix(bool keepMirror, bool keepRotations, bool complete, bool strictColors = false) override;
+  void applySolutionFilterFlags(bool keepMirror, bool keepRotations, bool complete) override;
+  void assemble(assembler_cb * callback) override;
+  std::unique_ptr<assembler_c> clonePrepared(void) override;
+  std::unique_ptr<assembler_c> splitSearch(void) override;
+  bool searchFinished(void) const override;
+  unsigned int remainingSearchWork(void) const override;
+  void assembleLimited(assembler_cb * callback, unsigned int iterationBudget) override;
+  void addIterations(unsigned long n) override;
+  void addProgressPeer(assembler_c * peer) override;
+  void clearProgressPeers(void) override;
+  int getErrorsParam(void) override { return errorsParam; }
+  float getFinished(void) const override;
+  void stop(void) override;
+  bool stopped(void) const override { return !running; }
+  errState setPosition(const char * string, const char * version) override;
+  void save(xmlWriter_c & xml) const override;
+  void reduce(void) override;
+  unsigned int getReducePiece(void) const override { return reducePiece; }
+  unsigned long getIterations(void) override;
 
   /* some more special information to find out possible piece placements */
-  bool getPiecePlacementSupported(void) const { return true; }
-  unsigned int getPiecePlacement(unsigned int node, int delta, unsigned int piece, unsigned char *tran, int *x, int *y, int *z) const;
-  unsigned int getPiecePlacementCount(unsigned int piece) const;
+  bool getPiecePlacementSupported(void) const override { return true; }
+  unsigned int getPiecePlacement(unsigned int node, int delta, unsigned int piece, unsigned char *tran, int *x, int *y, int *z) const override;
+  unsigned int getPiecePlacementCount(unsigned int piece) const override;
 
-  void debug_step(unsigned long num = 1);
-  assembly_c * getAssembly(void);
+  void debug_step(unsigned long num = 1) override;
+  std::unique_ptr<assembly_c> getAssembly(void) override;
 
   static bool canHandle(const problem_c & p);
 

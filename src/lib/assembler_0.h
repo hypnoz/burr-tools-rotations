@@ -24,13 +24,19 @@
 #include "assembler.h"
 #include "bt_classic_solver.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <atomic>
 #include <vector>
 #include <set>
 #include <stack>
+#include <unordered_set>
+#include <mutex>
+#include <memory>
 
 class gridType_c;
 class mirrorInfo_c;
+class ISimdExactCover;
 
 /**
  * This is an assembler class.
@@ -64,10 +70,10 @@ private:
   std::vector<unsigned int> colCount;
 
   /* used to abort the searching */
-  std::atomic<bool> abort;
+  std::atomic<bool> abbort;
 
   /* used to save if the search is running */
-  bool running;
+  std::atomic<bool> running{false};
 
   /* cover one column:
    * - remove the column from the column header node list,
@@ -122,8 +128,8 @@ private:
    * the pos value contains the number of pieces placed
    */
   unsigned int pos;
-  unsigned int *rows;
-  unsigned int *columns;
+  std::vector<unsigned int> rows;
+  std::vector<unsigned int> columns;
 
   void iterativeMultiSearch(void);
 
@@ -148,32 +154,32 @@ private:
   bool checkmatrix(void);
 
   /* internal error state */
-  errState errorsState;
-  int errorsParam;
+  errState errorsState = ERR_NONE;
+  int errorsParam = 0;
 
   /* number of iterations the assemble routine run */
-  unsigned long iterations;
+  std::atomic<unsigned long> iterations{0};  // single-writer counter, read cross-thread by getIterations
 
   /* the number of holes the assembles piece will have. Holes are
    * voxels in the variable voxel set that are not filled. The other
    * voxels are all filled
    */
-  int holes;
+  int holes = 0;
 
   /* first and one after last column for the variable voxels */
-  unsigned int varivoxelStart;
-  unsigned int varivoxelEnd;
+  unsigned int varivoxelStart = 0;
+  unsigned int varivoxelEnd = 0;
 
   /* now this isn't hard to guess, is it? */
-  unsigned int piecenumber;
+  unsigned int piecenumber = 0;
 
   /* the message object that gets called with the solutions as param */
-  assembler_cb * asm_bc;
+  assembler_cb * asm_bc = nullptr;
 
   /* this value contains the piecenumber that the reduce procedure is currently working on
    * the value is only valid, when reduce is running
    */
-  unsigned int reducePiece;
+  std::atomic<unsigned int> reducePiece{0};  // written by worker, read by GUI via getReducePiece
 
   /* this vector contains the placement (transformation and position) for
    * a piece in a row
@@ -194,20 +200,57 @@ private:
 
   /* the members for rotations rejection
    */
-  bool avoidTransformedAssemblies;
-  bool rotationFilterActive;
-  unsigned int avoidTransformedPivot;
-  mirrorInfo_c * avoidTransformedMirror;
+  bool avoidTransformedAssemblies = false;
+  bool rotationFilterActive = false;
+  unsigned int avoidTransformedPivot = 0;
+  std::unique_ptr<mirrorInfo_c> avoidTransformedMirror;
 
   /// set to true, when complete rotation analysis is requested
-  bool complete;
+  bool complete = false;
 
   /* the variables for debugging assembling processes
    */
-  bool debug;         // debugging enabled
-  int debug_loops;    // how many loops to run ?
+  bool debug = false;         // debugging enabled
+  int debug_loops = 0;    // how many loops to run ?
 
   unsigned int clumpify(void);
+
+  /* multi-threading support */
+  friend class assemblerWorker_c;
+
+  struct PrefixStep {
+    unsigned int col;
+    unsigned int row;
+  };
+
+  struct SubtreeTask {
+    std::vector<PrefixStep> prefix;
+  };
+
+  std::vector<SubtreeTask> parallelTasks;
+  std::vector<uint8_t> taskCompleted;
+  std::unordered_set<uint64_t> emittedSignatures;
+
+  /* set when a parallel search stopped before finishing.
+   *
+   * The serial search saves an exact resume point (pos plus the row/column
+   * prefix). A parallel search has no single such point: progress lives in
+   * taskCompleted plus whatever each worker had reached inside the task it was
+   * in the middle of, and the assemblies already handed to the callback are
+   * only remembered in emittedSignatures, which does not survive a save.
+   * Writing pos == 0 in that situation would claim "nothing searched yet"
+   * next to a solution list that is already populated, and continuing would
+   * report every one of those assemblies a second time. So an interrupted
+   * parallel search is marked here, saved as not resumable, and restarted
+   * from scratch on load with the counters reset.
+   */
+  bool parallelInterrupted = false;
+
+  void generateSubtreeTasks(std::vector<SubtreeTask> & tasks, unsigned int targetTasks, unsigned int maxDepth);
+  void parallelMultiSearch(unsigned int workers);
+  bool canUseSimd(void) const;
+  void simdSearch(void);
+  std::unique_ptr<ISimdExactCover> createSimdSolver(void) const;
 
 protected:
 
@@ -269,7 +312,7 @@ protected:
    * rotations it should call this function. This will then add an additional check
    * for each found assembly
    */
-  void checkForTransformedAssemblies(unsigned int pivot, mirrorInfo_c * mir);
+  void checkForTransformedAssemblies(unsigned int pivot, std::unique_ptr<mirrorInfo_c> mir);
 
 public:
 
@@ -277,26 +320,27 @@ public:
   ~assembler_0_c(void);
 
   /* functions that are overloaded from assembler_c, for comments see there */
-  errState createMatrix(bool keepMirror, bool keepRotations, bool complete);
-  void applySolutionFilterFlags(bool keepMirror, bool keepRotations, bool complete);
-  void assemble(assembler_cb * callback);
-  int getErrorsParam(void) { return errorsParam; }
-  virtual float getFinished(void) const;
-  virtual void stop(void);
-  virtual bool stopped(void) const { return !running; }
-  virtual errState setPosition(const char * string, const char * version);
-  virtual void save(xmlWriter_c & xml) const;
-  virtual void reduce(void);
-  virtual unsigned int getReducePiece(void) const { return reducePiece; }
-  virtual unsigned long getIterations(void);
+  using assembler_c::assemble;
+  errState createMatrix(bool keepMirror, bool keepRotations, bool complete, bool strictColors = false) override;
+  void applySolutionFilterFlags(bool keepMirror, bool keepRotations, bool complete) override;
+  void assemble(assembler_cb * callback) override;
+  int getErrorsParam(void) override { return errorsParam; }
+  float getFinished(void) const override;
+  void stop(void) override { abbort.store(true, std::memory_order_relaxed); }
+  bool stopped(void) const override { return !running.load(std::memory_order_relaxed); }
+  errState setPosition(const char * string, const char * version) override;
+  void save(xmlWriter_c & xml) const override;
+  void reduce(void) override;
+  unsigned int getReducePiece(void) const override { return reducePiece; }
+  unsigned long getIterations(void) override { return iterations; }
 
   /* some more special information to find out possible piece placements */
-  bool getPiecePlacementSupported(void) const { return true; }
-  unsigned int getPiecePlacement(unsigned int node, int delta, unsigned int piece, unsigned char *tran, int *x, int *y, int *z) const;
-  unsigned int getPiecePlacementCount(unsigned int piece) const;
+  bool getPiecePlacementSupported(void) const override { return true; }
+  unsigned int getPiecePlacement(unsigned int node, int delta, unsigned int piece, unsigned char *tran, int *x, int *y, int *z) const override;
+  unsigned int getPiecePlacementCount(unsigned int piece) const override;
 
-  void debug_step(unsigned long num = 1);
-  assembly_c * getAssembly(void);
+  void debug_step(unsigned long num = 1) override;
+  std::unique_ptr<assembly_c> getAssembly(void) override;
 
   static bool canHandle(const problem_c & p);
 

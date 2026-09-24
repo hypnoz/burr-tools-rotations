@@ -11,11 +11,17 @@
  */
 #include "statusline.h"
 
+#include "configuration.h"
+
 LStatusLine::LStatusLine(int x, int y, int w, int h) : layouter_c(x, y, w, h), colorModeIndex(0) {
 
   weight(1, 0);
   box(FL_FLAT_BOX);
   color(FL_BACKGROUND_COLOR);
+
+  renderStyleIndex = config.renderStyle();
+  if (renderStyleIndex < 0 || renderStyleIndex > 2)
+    renderStyleIndex = 0;
 
   text = new LFl_Box(0, 0, 1, 1);
   text->box(FL_NO_BOX);
@@ -46,4 +52,20 @@ voxelFrame_c::colorMode LStatusLine::getColorMode(void) const {
     case 3: return voxelFrame_c::anaglyphColorL;
     default: return voxelFrame_c::pieceColor;
   }
+}
+
+voxelFrame_c::renderStyle LStatusLine::getRenderStyle(void) const {
+
+  switch (renderStyleIndex) {
+    case 0: return voxelFrame_c::styleVoxel;
+    case 1: return voxelFrame_c::styleEdges;
+    case 2: return voxelFrame_c::styleSTL;
+    default: return voxelFrame_c::styleVoxel;
+  }
+}
+
+void LStatusLine::setRenderStyleIndex(int i) {
+  if (i < 0 || i > 2)
+    i = 0;
+  renderStyleIndex = i;
 }

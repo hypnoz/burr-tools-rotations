@@ -48,7 +48,6 @@ class stlException_c {
  * The STL file handling is done in here, so that the concrete exporters only need
  * to write a long list of triangles
  */
-class faceList_c;
 class stlExporter_c {
 
   public:
@@ -60,7 +59,7 @@ class stlExporter_c {
     /**
      * This function exports one shape.
      */
-    void write(const char * basename, const voxel_c & shape, const faceList_c & holes);
+    void write(const char * basename, const voxel_c & shape);
 
     /** parameters can have different type
      * this enum lists all supported types
@@ -95,7 +94,7 @@ class stlExporter_c {
     /** find out if binary mode is active */
     bool getBinaryMode(void) { return binaryMode; }
 
-    virtual Polyhedron * getMesh(const voxel_c & v, const faceList_c & holes) const = 0;
+    virtual Polyhedron * getMesh(const voxel_c & v) const = 0;
 
   private:
 

@@ -136,8 +136,7 @@ bool voxel_1_c::transform(unsigned int nr) {
 
   int voxelsn = nsx*nsy*nsz;
 
-  voxel_type *s = new voxel_type[voxelsn];
-  memset(s, VX_EMPTY, voxelsn);
+  std::vector<voxel_type> s(voxelsn, VX_EMPTY);
 
   index = 0;
   for (unsigned int z = 0; z < sz; z++)
@@ -200,8 +199,7 @@ bool voxel_1_c::transform(unsigned int nr) {
   sy = nsy;
   sz = nsz;
 
-  delete [] space;
-  space = s;
+  space = std::move(s);
 
   voxels = voxelsn;
 
@@ -243,6 +241,14 @@ void voxel_1_c::transformPoint(int * x, int * y, int * z, unsigned int trans) co
   *z = (int)(zpn+(zpn<0?-0.5:0.5));
   *y = (int)floor(ypn);
   *x = (int)(xpn+(xpn<0?-0.5:0.5));
+}
+
+void voxel_1_c::getTransformMatrix(unsigned int trans, double m[9]) const {
+
+  bt_assert(trans < NUM_TRANSFORMATIONS_MIRROR);
+
+  for (int i = 0; i < 9; i++)
+    m[i] = rotationMatrices[trans][i];
 }
 
 bool voxel_1_c::getNeighbor(unsigned int idx, unsigned int typ, int x, int y, int z, int * xn, int *yn, int *zn) const {
@@ -315,8 +321,7 @@ void voxel_1_c::scale(unsigned int amount, bool grid)
   unsigned int nsx = amount-1 + sx*amount;
   unsigned int nsy = sy*amount;
   unsigned int nsz = sz*amount;
-  voxel_type * s2 = new voxel_type[nsx*nsy*nsz];
-  memset(s2, VX_EMPTY, nsx*nsy*nsz);
+  std::vector<voxel_type> s2(nsx*nsy*nsz, VX_EMPTY);
 
   for (unsigned int x = 0; x < sx; x++)
     for (unsigned int y = 0; y < sy; y++)
@@ -359,8 +364,7 @@ void voxel_1_c::scale(unsigned int amount, bool grid)
               }
             }
 
-  delete [] space;
-  space = s2;
+  space = std::move(s2);
 
   sx = nsx;
   sy = nsy;
@@ -487,9 +491,3 @@ void voxel_1_c::recalcSpaceCoordinates(float * x, float * y, float * /*z*/) cons
   *y = *y * HEIGHT;
 }
 
-bool voxel_1_c::meshParamsValid(double bevel, double offset) const {
-  if (bevel+offset < sqrt(3)/6)
-    return true;
-  else
-    return false;
-}

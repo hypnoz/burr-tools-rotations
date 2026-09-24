@@ -22,6 +22,7 @@
 #define __CONFIGURATION_H__
 
 #include <stdio.h>
+#include <vector>
 
 /* this module contains a class for configuration file
  * handling loading and saving is handled
@@ -55,6 +56,9 @@ public:
   bool debugRotations(void) { return i_debugRotations; }
   bool debugStatistics(void) { return i_debugStatistics; }
 
+  int renderStyle(void) { return i_render_style; }
+  void renderStyle(int val) { i_render_style = val; }
+
   int windowPosX(void) { return i_window_pos_x; }
   int windowPosY(void) { return i_window_pos_y; }
   int windowPosW(void) { return i_window_pos_w; }
@@ -80,8 +84,7 @@ private:
   void parse(void);
   void register_entry(const char *cnf_name, cnf_type cnf_typ, void *cnf_var, long maxlen, bool dialog, const char * dtext, const char * dhelp, const char * def);
 
-  typedef struct config_data {
-    config_data *next;
+  struct config_data {
     const char *cnf_name;  // name of entry in configuration file
     cnf_type  cnf_typ;   // data type of the variable
     void     *cnf_var;   // pointer to the variable
@@ -91,9 +94,9 @@ private:
     const char * dialogHelp;
     void *    widget;    // used in the dialogue to save pointer to the widget
     const char * defaultValue; // the variable will have this value, when not initialized in script file
-  } config_data;
+  };
 
-  config_data *first_data;
+  std::vector<config_data> data;
 
   bool i_use_tooltips;
   bool i_use_lightning;
@@ -104,6 +107,7 @@ private:
   bool i_reverseScrollZoom;
   bool i_debugRotations;
   bool i_debugStatistics;
+  int i_render_style;
 
   int i_window_pos_x;
   int i_window_pos_y;

@@ -19,6 +19,10 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 #include "voxel_0.h"
+#include "gridtype.h"
+#include "cubepoly.h"
+
+#include <cstdio>
 
 #include <stdlib.h>
 
@@ -72,8 +76,7 @@ bool voxel_0_c::transform(unsigned int nr) {
   int nsy = abs(ty)+1;
   int nsz = abs(tz)+1;
 
-  voxel_type * s = new voxel_type[nsx*nsy*nsz];
-  memset(s, VX_EMPTY, nsx*nsy*nsz);
+  std::vector<voxel_type> s(nsx*nsy*nsz, VX_EMPTY);
 
   unsigned int index = 0;
   for (unsigned int z = 0; z < sz; z++)
@@ -93,8 +96,7 @@ bool voxel_0_c::transform(unsigned int nr) {
         index++;
       }
 
-  delete [] space;
-  space = s;
+  space = std::move(s);
 
   sx = nsx;
   sy = nsy;
@@ -151,6 +153,14 @@ void voxel_0_c::transformPoint(int * x, int * y, int * z, unsigned int trans) co
   *z = rotationMatrices[trans][6]*sx + rotationMatrices[trans][7]*sy + rotationMatrices[trans][8]*sz;
 }
 
+void voxel_0_c::getTransformMatrix(unsigned int trans, double m[9]) const {
+
+  bt_assert(trans < NUM_TRANSFORMATIONS_MIRROR);
+
+  for (int i = 0; i < 9; i++)
+    m[i] = rotationMatrices[trans][i];
+}
+
 bool voxel_0_c::getNeighbor(unsigned int idx, unsigned int typ, int x, int y, int z, int * xn, int *yn, int *zn) const {
 
   switch (typ) {
@@ -201,7 +211,7 @@ bool voxel_0_c::getNeighbor(unsigned int idx, unsigned int typ, int x, int y, in
 
 void voxel_0_c::scale(unsigned int amount, bool grid)
 {
-  voxel_type * s2 = new voxel_type[sx*amount*sy*amount*sz*amount];
+  std::vector<voxel_type> s2(sx*amount*sy*amount*sz*amount);
 
   for (unsigned int x = 0; x < sx; x++)
     for (unsigned int y = 0; y < sy; y++)
@@ -232,8 +242,7 @@ void voxel_0_c::scale(unsigned int amount, bool grid)
                     s2[(x*amount+ax) + (sx*amount) * ((y*amount+ay) + (sy*amount) * (z*amount+az))] = 0;
               }
 
-  delete [] space;
-  space = s2;
+  space = std::move(s2);
 
   sx *= amount;
   sy *= amount;
@@ -278,15 +287,14 @@ bool voxel_0_c::scaleDown(unsigned char by, bool action) {
             unsigned int nsy = sy/by;
             unsigned int nsz = sz/by;
 
-            voxel_type * s2 = new voxel_type[nsx*nsy*nsz];
+            std::vector<voxel_type> s2(nsx*nsy*nsz);
 
             for (unsigned int x = 0; x < nsx; x++)
               for (unsigned int y = 0; y < nsy; y++)
                 for (unsigned int z = 0; z < nsz; z++)
                   s2[x + nsx * (y + nsy * z)] = get2(x*by, y*by, z*by);
 
-            delete [] space;
-            space = s2;
+            space = std::move(s2);
 
             sx = nsx;
             sy = nsy;
@@ -387,9 +395,17 @@ void voxel_0_c::calculateSize(float * x, float * y, float * z) const {
   *z = getZ();
 }
 
-bool voxel_0_c::meshParamsValid(double bevel, double offset) const {
-  if (bevel+offset > 0.5)
-    return false;
-  else
-    return true;
+Polyhedron * voxel_0_c::getSTLMesh(void) const
+{
+  /* the rhombic and tetra-octa grids derive from this class but are not
+   * made of cubes: they have their own mesher, reached through the base */
+  if (getGridType()->getType() != gridType_c::GT_BRICKS) return voxel_c::getSTLMesh();
+  /* the base class's defaults, in cell units: bevel 0.05, offset 0.02 */
+  std::string err;
+  Polyhedron * p = cubePolyhedron(*this, 0.02, 0.05, true, err);
+  if (p) return p;
+  /* cannot happen for these parameters; a draw path must not crash, so
+   * say why and show the flat mesh of the edge-line style */
+  fprintf(stderr, "cube chamfer mesher failed for the 3D view: %s\n", err.c_str());
+  return getFlatMesh();
 }

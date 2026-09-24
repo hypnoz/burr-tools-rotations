@@ -59,20 +59,20 @@ static void printMatrix(
     unsigned int c = right[0];
     while (c) {
 
-      if (left[right[c]] != c) printf("lr %i\n", c);
-      if (right[left[c]] != c) printf("rl %i\n", c);
-      if (up(down(c)) != c) printf("ud %i\n", c);
-      if (down(up(c)) != c) printf("du %i\n", c);
+      if (left[right[c]] != c) printf("lr %u\n", c);
+      if (right[left[c]] != c) printf("rl %u\n", c);
+      if (up(down(c)) != c) printf("ud %u\n", c);
+      if (down(up(c)) != c) printf("du %u\n", c);
       cnt++;
 
       unsigned int r = down(c);
 
       while (r != c) {
 
-        if (left[right[r]] != r) printf("lr %i\n", r);
-        if (right[left[r]] != r) printf("rl %i\n", r);
-        if (up(down(r)) != r) printf("ud %i\n", r);
-        if (down(up(r)) != r) printf("du %i\n", r);
+        if (left[right[r]] != r) printf("lr %u\n", r);
+        if (right[left[r]] != r) printf("rl %u\n", r);
+        if (up(down(r)) != r) printf("ud %u\n", r);
+        if (down(up(r)) != r) printf("du %u\n", r);
         cnt++;
 
         r = down(r);
@@ -82,10 +82,10 @@ static void printMatrix(
       c = right[c];
     }
 
-    printf("checked %li nodes for consistency\n", cnt);
+    printf("checked %lu nodes for consistency\n", cnt);
   }
 
-  printf("%i %i\n", varivoxelStart, varivoxelEnd);
+  printf("%u %u\n", varivoxelStart, varivoxelEnd);
 
   /* first find all the columns */
   std::vector<unsigned int> columns;
@@ -338,11 +338,10 @@ assembler_bt2_c::assembler_bt2_c(const problem_c & prob) :
   problem(prob),
   abort(false),
   running(false),
-  pos(0), rows(0), columns(0),
+  pos(0),
   reducePiece(0),
-  avoidTransformedAssemblies(0), rotationFilterActive(0), avoidTransformedMirror(0),
-  cellsBuilt(false),
-  ownAvoidTransformedMirror(true)
+  avoidTransformedAssemblies(false), rotationFilterActive(false), avoidTransformedMirror(nullptr),
+  cellsBuilt(false)
 {
 }
 
@@ -356,8 +355,8 @@ assembler_bt2_c::assembler_bt2_c(const assembler_bt2_c & src) :
   abort(false),
   running(false),
   pos(0),
-  rows(0),
-  columns(0),
+  rows(src.piecenumber, 0),
+  columns(src.piecenumber, 0),
   errorsState(src.errorsState),
   errorsParam(src.errorsParam),
   iterations(0),
@@ -376,22 +375,12 @@ assembler_bt2_c::assembler_bt2_c(const assembler_bt2_c & src) :
   debug(false),
   debug_loops(0),
   cells(src.cells),
-  cellsBuilt(src.cellsBuilt),
-  ownAvoidTransformedMirror(false)
+  cellsBuilt(src.cellsBuilt)
 {
-  rows = new unsigned int[piecenumber];
-  columns = new unsigned int[piecenumber];
-  memset(rows, 0, piecenumber * sizeof(unsigned int));
-  memset(columns, 0, piecenumber * sizeof(unsigned int));
+  strictColorRestrictions = src.strictColorRestrictions;
 }
 
-assembler_bt2_c::~assembler_bt2_c() {
-  if (rows) delete [] rows;
-  if (columns) delete [] columns;
-
-  if (ownAvoidTransformedMirror && avoidTransformedMirror)
-    delete avoidTransformedMirror;
-}
+assembler_bt2_c::~assembler_bt2_c() = default;
 
 /* add a piece to the cache, but only if it is not already there. If it is added return the
  * piece pointer otherwise return null
@@ -425,8 +414,11 @@ bool assembler_bt2_c::canPlace(const voxel_c * piece, int x, int y, int z) const
             ((piece->getState(px, py, pz) == voxel_c::VX_FILLED) &&
              (result->getState(x+px, y+py, z+pz) == voxel_c::VX_EMPTY)) ||
 
-            // the piece can also not be placed when the colour constraints don't fit
-            !problem.placementAllowed(piece->getColor(px, py, pz), result->getColor(x+px, y+py, z+pz))
+            // the piece can also not be placed when the colour constraints don't fit.
+            // An empty neutral cell carries no colour constraint.
+            ((piece->getState(px, py, pz) == voxel_c::VX_FILLED ||
+              piece->getColor(px, py, pz) != 0) &&
+             !problem.placementAllowed(piece->getColor(px, py, pz), result->getColor(x+px, y+py, z+pz), strictColorRestrictions))
 
            )
           return false;
@@ -467,16 +459,13 @@ int assembler_bt2_c::prepare(void) {
    * with this lookup I was able to reduce the preparation time
    * from 5 to 0.5 seconds for TheLostDay puzzle
    */
-  unsigned int * columns = new unsigned int[result->getXYZ()];
+  std::vector<unsigned int> columns(result->getXYZ());
   unsigned int piecenumber = problem.getNumberOfPieces();
 
   /* voxelindex is the inverse of the function column. It returns
    * the index (not x, y, z) of a given column in the matrix
    */
-  int * voxelindex = new int[result->getXYZ() + piecenumber + 1];
-
-  for (unsigned int i = 0; i < result->getXYZ() + piecenumber + 1; i++)
-    voxelindex[i] = -1;
+  std::vector<int> voxelindex(result->getXYZ() + piecenumber + 1, -1);
 
   {
     int v = 0;
@@ -542,7 +531,7 @@ int assembler_bt2_c::prepare(void) {
       }
     }
 
-    checkForTransformedAssemblies(symBreakerShape, 0);
+    checkForTransformedAssemblies(symBreakerShape, nullptr);
 
     if (sym->symmetryContainsMirror(resultSym)) {
       /* we need to to the mirror check here, and initialise the mirror
@@ -562,7 +551,7 @@ int assembler_bt2_c::prepare(void) {
         unsigned int trans;
       } mm;
 
-      mm * mirror = new mm[problem.getNumberOfPieces()];
+      std::vector<mm> mirror(problem.getNumberOfPieces());
 
       // first initialize
       for (unsigned int i = 0; i < problem.getNumberOfParts(); i++) {
@@ -622,16 +611,14 @@ int assembler_bt2_c::prepare(void) {
         /* all the shapes are either self mirroring or have a mirror pair
          * so we create the mirror structure and we do the mirror check
          */
-        mirrorInfo_c * mir = new mirrorInfo_c();
+        auto mir = std::make_unique<mirrorInfo_c>();
 
         for (unsigned int i = 0; i < problem.getNumberOfPieces(); i++)
           if (mirror[i].trans != 255)
             mir->addPieces(i, mirror[i].mirror, mirror[i].trans);
 
-        checkForTransformedAssemblies(symBreakerShape, mir);
+        checkForTransformedAssemblies(symBreakerShape, std::move(mir));
       }
-
-      delete [] mirror;
     }
   }
 
@@ -646,7 +633,7 @@ int assembler_bt2_c::prepare(void) {
   /* nodes 1..n are the columns nodes */
   GenerateFirstRow();
 
-  voxel_c ** cache = new voxel_c *[sym->getNumTransformationsMirror()];
+  std::vector<voxel_c*> cache(sym->getNumTransformationsMirror(), nullptr);
 
   /* now we insert one shape after another */
   for (unsigned int pc = 0; pc < problem.getNumberOfParts(); pc++) {
@@ -670,7 +657,7 @@ int assembler_bt2_c::prepare(void) {
         continue;
       }
 
-      rotation = addToCache(cache, &cachefill, rotation);
+      rotation = addToCache(cache.data(), &cachefill, rotation);
 
       if (rotation) {
         for (int x = (int)result->boundX1()-(int)rotation->boundX1(); x <= (int)result->boundX2()-(int)rotation->boundX2(); x++)
@@ -702,7 +689,7 @@ int assembler_bt2_c::prepare(void) {
                 continue;
               }
 
-              addToCache(cache, &cachefill, vx);
+              addToCache(cache.data(), &cachefill, vx);
             }
       }
     }
@@ -711,27 +698,21 @@ int assembler_bt2_c::prepare(void) {
 
     /* check, if the current piece has at least one placement */
     if (placements == 0) {
-      delete [] cache;
-      delete [] columns;
-      delete [] voxelindex;
       return -problem.getShapeIdOfPart(pc);
     }
   }
-
-  delete [] cache;
-  delete [] columns;
-  delete [] voxelindex;
 
   return 1;
 }
 
 
 
-assembler_bt2_c::errState assembler_bt2_c::createMatrix(bool keepMirror, bool keepRotations, bool comp) {
+assembler_bt2_c::errState assembler_bt2_c::createMatrix(bool keepMirror, bool keepRotations, bool comp, bool strictColors) {
 
   bt_assert(problem.resultValid());
 
   complete = comp;
+  strictColorRestrictions = strictColors;
 
   if (!canHandle(problem))
     return ERR_PUZZLE_UNHANDABLE;
@@ -771,8 +752,8 @@ assembler_bt2_c::errState assembler_bt2_c::createMatrix(bool keepMirror, bool ke
   holes = h;
 
   /* allocate all the required memory */
-  rows = new unsigned int[piecenumber];
-  columns = new unsigned int [piecenumber];
+  rows.assign(piecenumber, 0);
+  columns.assign(piecenumber, 0);
 
   /* fill the nodes arrays */
   int error = prepare();
@@ -784,13 +765,11 @@ assembler_bt2_c::errState assembler_bt2_c::createMatrix(bool keepMirror, bool ke
     return errorsState;
   }
 
-  memset(rows, 0, piecenumber * sizeof(unsigned int));
-  memset(columns, 0, piecenumber * sizeof(unsigned int));
   pos = 0;
   iterations = 0;
 
   if (keepMirror)
-    avoidTransformedMirror = 0;
+    avoidTransformedMirror.reset();
 
   if (keepRotations)
     avoidTransformedAssemblies = false;
@@ -803,10 +782,8 @@ void assembler_bt2_c::applySolutionFilterFlags(bool keepMirror, bool keepRotatio
 
   complete = comp;
 
-  if (keepMirror) {
-    delete avoidTransformedMirror;
-    avoidTransformedMirror = 0;
-  }
+  if (keepMirror)
+    avoidTransformedMirror.reset();
 
   if (keepRotations)
     avoidTransformedAssemblies = false;
@@ -1074,7 +1051,7 @@ void assembler_bt2_c::reduce(void) {
   /* this array is used in several occasions, where we need to
    * keep some information for all columns
    */
-  unsigned int *columns = new unsigned int[varivoxelEnd];
+  std::vector<unsigned int> columns(varivoxelEnd);
   unsigned int removed = 0;
   unsigned int remCol = 0;
   bool rem_sth;
@@ -1090,7 +1067,7 @@ void assembler_bt2_c::reduce(void) {
     if (abort.load(std::memory_order_acquire))
       break;
 
-    memset(columns, 0, varivoxelEnd * sizeof(unsigned int));
+    memset(columns.data(), 0, varivoxelEnd * sizeof(unsigned int));
 
     unsigned int placements = 0;
     for (unsigned int r = down(col); r != col; r = down(r)) {
@@ -1159,7 +1136,7 @@ void assembler_bt2_c::reduce(void) {
 
         // try to do this placement, if the placing goes
         // wrong already, we don't need to do the deep check
-        if (!try_cover_row(r, columns)) {
+        if (!try_cover_row(r, columns.data())) {
           rowsToRemove.push_back(r);
         } else {
 
@@ -1183,7 +1160,7 @@ void assembler_bt2_c::reduce(void) {
        * placements, no other piece can be there, all other pieces placements that fill
        * this cube can be removed
        */
-      memset(columns, 0, varivoxelEnd * sizeof(unsigned int));
+      memset(columns.data(), 0, varivoxelEnd * sizeof(unsigned int));
       unsigned int placements = 0;
       for (unsigned int r = down(p+1); r != p+1; r = down(r)) {
         for (unsigned int j = right[r]; j != r; j = right[j])
@@ -1227,25 +1204,22 @@ void assembler_bt2_c::reduce(void) {
     }
   } while (rem_sth);
 
-  delete [] columns;
-
   remCol += clumpify();
 
-  fprintf(stderr, "removed %i rows and %i columns\n", removed, remCol);
+  fprintf(stderr, "removed %u rows and %u columns\n", removed, remCol);
 }
 
-assembly_c * assembler_bt2_c::getAssembly(void) {
+std::unique_ptr<assembly_c> assembler_bt2_c::getAssembly(void) {
 
   if (cellsBuilt) {
     const std::vector<unsigned int> & rowIds = cells.currentRowIds();
-    assembly_c * assembly = new assembly_c(problem.getPuzzle().getGridType());
+    auto assembly = std::make_unique<assembly_c>(problem.getPuzzle().getGridType());
 
-    unsigned int * pieces = new unsigned int[getPiecenumber()];
-    unsigned char * trans = new unsigned char[getPiecenumber()];
-    int * xs = new int[getPiecenumber()];
-    int * ys = new int[getPiecenumber()];
-    int * zs = new int[getPiecenumber()];
-    memset(pieces, 0xff, sizeof(unsigned int) * getPiecenumber());
+    std::vector<unsigned int> pieces(getPiecenumber(), 0xFFFFFFFF);
+    std::vector<unsigned char> trans(getPiecenumber());
+    std::vector<int> xs(getPiecenumber());
+    std::vector<int> ys(getPiecenumber());
+    std::vector<int> zs(getPiecenumber());
 
     for (unsigned int i = 0; i < rowIds.size(); i++) {
       unsigned char tran;
@@ -1267,15 +1241,10 @@ assembly_c * assembler_bt2_c::getAssembly(void) {
       else
         assembly->addPlacement(trans[i], xs[i], ys[i], zs[i]);
 
-    delete [] pieces;
-    delete [] trans;
-    delete [] xs;
-    delete [] ys;
-    delete [] zs;
     return assembly;
   }
 
-  assembly_c * assembly = new assembly_c(problem.getPuzzle().getGridType());
+  auto assembly = std::make_unique<assembly_c>(problem.getPuzzle().getGridType());
 
   // if no pieces are placed, or we finished return an empty assembly
   if (pos > piecenumber) {
@@ -1287,16 +1256,11 @@ assembly_c * assembler_bt2_c::getAssembly(void) {
   bt_assert(getPos() <= getPiecenumber());
 
   /* first we need to find the order the piece are in */
-  unsigned int * pieces = new unsigned int[getPiecenumber()];
-  unsigned char * trans = new unsigned char[getPiecenumber()];
-  int * xs = new int[getPiecenumber()];
-  int * ys = new int[getPiecenumber()];
-  int * zs = new int[getPiecenumber()];
-
-  /* fill the array with 0xff, so that we can distinguish between
-   * placed and unplaced pieces
-   */
-  memset(pieces, 0xff, sizeof(unsigned int) * getPiecenumber());
+  std::vector<unsigned int> pieces(getPiecenumber(), 0xFFFFFFFF);
+  std::vector<unsigned char> trans(getPiecenumber());
+  std::vector<int> xs(getPiecenumber());
+  std::vector<int> ys(getPiecenumber());
+  std::vector<int> zs(getPiecenumber());
 
   for (unsigned int i = 0; i < getPos(); i++) {
     unsigned char tran;
@@ -1318,23 +1282,17 @@ assembly_c * assembler_bt2_c::getAssembly(void) {
     else
       assembly->addPlacement(trans[i], xs[i], ys[i], zs[i]);
 
-  delete [] pieces;
-  delete [] trans;
-  delete [] xs;
-  delete [] ys;
-  delete [] zs;
-
   // sort is not necessary because there is only one of each piece
   // assembly->sort(puzzle, problem);
 
   return assembly;
 }
 
-void assembler_bt2_c::checkForTransformedAssemblies(unsigned int pivot, mirrorInfo_c * mir) {
+void assembler_bt2_c::checkForTransformedAssemblies(unsigned int pivot, std::unique_ptr<mirrorInfo_c> mir) {
   avoidTransformedAssemblies = true;
   rotationFilterActive = true;
   avoidTransformedPivot = pivot;
-  avoidTransformedMirror = mir;
+  avoidTransformedMirror = std::move(mir);
 }
 
 /* this function handles the assemblies found by the assembler engine
@@ -1343,12 +1301,13 @@ void assembler_bt2_c::solution(void) {
 
   if (getCallback()) {
 
-    assembly_c * assembly = getAssembly();
+    std::unique_ptr<assembly_c> assembly = getAssembly();
 
-    if (avoidTransformedAssemblies && assembly->smallerRotationExists(problem, avoidTransformedPivot, avoidTransformedMirror, complete))
-      delete assembly;
+    if (avoidTransformedAssemblies && assembly->smallerRotationExists(problem, avoidTransformedPivot, avoidTransformedMirror.get(), complete, strictColorRestrictions))
+      return;
     else {
-      getCallback()->assembly(assembly);
+      if (!getCallback()->assembly(std::move(assembly)))
+        stop();
     }
   }
 }
@@ -1578,15 +1537,13 @@ void assembler_bt2_c::solutionFromRowNodes(const unsigned int * rowNodes, unsign
   if (!getCallback())
     return;
 
-  assembly_c * assembly = new assembly_c(problem.getPuzzle().getGridType());
+  auto assembly = std::make_unique<assembly_c>(problem.getPuzzle().getGridType());
 
-  unsigned int * pieces = new unsigned int[getPiecenumber()];
-  unsigned char * trans = new unsigned char[getPiecenumber()];
-  int * xs = new int[getPiecenumber()];
-  int * ys = new int[getPiecenumber()];
-  int * zs = new int[getPiecenumber()];
-
-  memset(pieces, 0xff, sizeof(unsigned int) * getPiecenumber());
+  std::vector<unsigned int> pieces(getPiecenumber(), 0xFFFFFFFF);
+  std::vector<unsigned char> trans(getPiecenumber());
+  std::vector<int> xs(getPiecenumber());
+  std::vector<int> ys(getPiecenumber());
+  std::vector<int> zs(getPiecenumber());
 
   for (unsigned int i = 0; i < n; i++) {
     unsigned char tran;
@@ -1608,16 +1565,11 @@ void assembler_bt2_c::solutionFromRowNodes(const unsigned int * rowNodes, unsign
     else
       assembly->addPlacement(trans[i], xs[i], ys[i], zs[i]);
 
-  delete [] pieces;
-  delete [] trans;
-  delete [] xs;
-  delete [] ys;
-  delete [] zs;
+  if (avoidTransformedAssemblies && assembly->smallerRotationExists(problem, avoidTransformedPivot, avoidTransformedMirror.get(), complete, strictColorRestrictions))
+    return;
 
-  if (avoidTransformedAssemblies && assembly->smallerRotationExists(problem, avoidTransformedPivot, avoidTransformedMirror, complete))
-    delete assembly;
-  else
-    getCallback()->assembly(assembly);
+  if (!getCallback()->assembly(std::move(assembly)))
+    stop();
 }
 
 void assembler_bt2_c::assemble(assembler_cb * callback) {
@@ -1641,25 +1593,23 @@ void assembler_bt2_c::assembleLimited(assembler_cb * callback, unsigned int iter
   running = false;
 }
 
-assembler_c * assembler_bt2_c::clonePrepared(void) {
+std::unique_ptr<assembler_c> assembler_bt2_c::clonePrepared(void) {
 
-  if (errorsState != ERR_NONE || !rows || !columns || piecenumber == 0)
-    return 0;
+  if (errorsState != ERR_NONE || rows.empty() || columns.empty() || piecenumber == 0)
+    return nullptr;
 
-  return new assembler_bt2_c(*this);
+  return std::unique_ptr<assembler_c>(new assembler_bt2_c(*this));
 }
 
-assembler_c * assembler_bt2_c::splitSearch(void) {
+std::unique_ptr<assembler_c> assembler_bt2_c::splitSearch(void) {
 
   buildCells();
-  assembler_bt2_c * c = new assembler_bt2_c(*this);
-  bt2Cells_c * branch = cells.split();
-  if (!branch) {
-    delete c;
-    return 0;
-  }
+  std::unique_ptr<bt2Cells_c> branch(cells.split());
+  if (!branch)
+    return nullptr;
+
+  std::unique_ptr<assembler_bt2_c> c(new assembler_bt2_c(*this));
   c->cells = *branch;
-  delete branch;
   return c;
 }
 
@@ -1721,7 +1671,7 @@ float assembler_bt2_c::finishedLocal(void) const {
    * the value may jump
    */
 
-  if (!rows || !columns || !upDown.size())
+  if (rows.empty() || columns.empty() || upDown.empty())
     return 0;
 
   float erg = 0;

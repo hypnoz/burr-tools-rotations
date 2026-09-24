@@ -40,6 +40,8 @@
 #include "../halfedge/modifiers.h"
 
 #include <vector>
+#include <memory>
+#include <string>
 
 class LView3dGroup;
 class LBlockListGroup;
@@ -58,12 +60,15 @@ class stlExport_c : public LFl_Double_Window {
     /* the puzzle that is going to be exported */
     puzzle_c * puzzle;
 
-    stlExporter_c * stl;
+    /* the default output directory, offered in the path field */
+    std::string exportDir;
+
+    std::unique_ptr<stlExporter_c> stl;
 
     /* The different window elements */
     LView3dGroup *view3D;
 
-    std::vector<inputField_c*> params;
+    std::vector<std::unique_ptr<inputField_c>> params;
     LFl_Input *Fname, *Pname;
     LFl_Box *status;
     LFl_Button *BtnStart, *BtnAbbort;
@@ -74,19 +79,22 @@ class stlExport_c : public LFl_Double_Window {
 
     pixmapList_c pm;
 
-    faceList_c holes;
-
   public:
 
-    stlExport_c(puzzle_c * p);
+    /* puzzleFile is the path the current puzzle was loaded from, or empty
+     * when it has never been saved. It supplies the default output
+     * directory; the field used to default to ".", which resolves to the
+     * working directory -- "/" for an application launched from a macOS
+     * bundle, which is read-only.
+     */
+    stlExport_c(puzzle_c * p, const std::string & puzzleFile);
     virtual ~stlExport_c(void);
 
     void cb_Export(void);
     void cb_Abort(void);
-    void cb_Update3DView(int type);
+    void cb_Update3DView(void);
     void cb_Update3DViewParams(void);
     void exportSTL(int shape);
-    void cb_3dClick(void);
     void cb_FileChooser(void);
 };
 

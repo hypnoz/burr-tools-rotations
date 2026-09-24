@@ -1,5 +1,6 @@
 *#
 *~
+admin/
 doxygen.cfg
 src/burrTxt
 src/burrTxt2
@@ -7,6 +8,7 @@ src/gui/burrGui
 src/help/helpviewer
 src/unitTest
 build/
+build-*/
 GPATH
 GRTAGS
 GTAGS
@@ -21,3 +23,24 @@ subprojects/*
 *.dmg
 *.app
 dmg_contents/
+coverage-html/
+
+# macOS Finder metadata, written into any directory the user opens in Finder
+.DS_Store
+
+# Generated Doxygen API reference (`just docs`)
+gendoc/
+
+# Python artifacts
+__pycache__/
+*.pyc
+
+# Local generated test output
+*.stl
+puzzles/
+
+# Benchmark and profiling outputs
+bench/*.csv
+bench_run.log
+callgrind*.out*
+perf.data*

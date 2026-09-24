@@ -208,8 +208,7 @@ void voxel_4_c::scale(unsigned int amount, bool /*grid*/) {
   unsigned int nsx = ((sx+2)/3)*amount*3;
   unsigned int nsy = ((sy+2)/3)*amount*3;
   unsigned int nsz = ((sz+2)/3)*amount*3;
-  voxel_type * s2 = new voxel_type[nsx*nsy*nsz];
-  memset(s2, VX_EMPTY, nsx*nsy*nsz);
+  std::vector<voxel_type> s2(nsx*nsy*nsz, VX_EMPTY);
 
   // we scale each 3x3x3 block
 
@@ -281,8 +280,7 @@ void voxel_4_c::scale(unsigned int amount, bool /*grid*/) {
         }
       }
 
-  delete [] space;
-  space = s2;
+  space = std::move(s2);
 
   sx = nsx;
   sy = nsy;
@@ -482,9 +480,9 @@ void voxel_4_c::getConnectionFace(int x, int y, int z, int n, double bevel, doub
 
 
 void voxel_4_c::calculateSize(float * x, float * y, float * z) const {
-  *x = (getX()+2)/3;
-  *y = (getY()+2)/3;
-  *z = (getZ()+2)/3;
+  *x = (float)((getX() + 2) / 3);
+  *y = (float)((getY() + 2) / 3);
+  *z = (float)((getZ() + 2) / 3);
 }
 
 void voxel_4_c::recalcSpaceCoordinates(float * x, float * y, float * z) const {
@@ -493,9 +491,3 @@ void voxel_4_c::recalcSpaceCoordinates(float * x, float * y, float * z) const {
   *z /= 3;
 }
 
-bool voxel_4_c::meshParamsValid(double bevel, double offset) const {
-  if (((bevel/2.678)+(offset/2.1)) > 1)
-    return false;
-  else
-    return true;
-}

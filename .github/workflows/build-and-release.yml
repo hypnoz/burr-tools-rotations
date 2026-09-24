@@ -71,7 +71,11 @@ jobs:
             build-essential ccache cmake ninja-build meson pkg-config git python3 \
             libgl-dev libglu1-mesa-dev libpng-dev zlib1g-dev \
             libx11-dev libxext-dev libxft-dev libxinerama-dev \
-            libxcursor-dev libxrender-dev libfontconfig1-dev
+            libxcursor-dev libxrender-dev libfontconfig1-dev \
+            cppcheck
+
+      - name: Install just
+        uses: extractions/setup-just@v2
 
       - name: Build and package
         env:
@@ -81,12 +85,160 @@ jobs:
           ./build_scripts/build-linux.sh --skip-dep-install --buildtype release
           ccache -s || true
 
+      - name: Run tests
+        run: just test
+
+      - name: Run static analysis
+        run: just check
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: burrtools-linux
           path: burrtools-${{ needs.version.outputs.version }}-linux-*.tar.gz
           if-no-files-found: error
+
+  coverage:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        submodules: recursive
+
+    - name: Update package list
+      run: sudo apt-get update
+
+    - name: Install dependencies
+      run: sudo apt-get install -y libboost-all-dev meson ninja-build build-essential freeglut3-dev libgl-dev libglu1-mesa-dev libpng-dev mesa-common-dev zlib1g-dev gcovr
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    # `shell: bash` sets pipefail, so a gcovr failure is not masked by tee's
+    # exit status.
+    - name: Report coverage and generate HTML report
+      shell: bash
+      run: just coverage-html | tee coverage-summary.txt
+
+    # Uploaded before the report body is built, so the body can link to it:
+    # the artifact-url output does not exist until the upload has run.
+    - name: Upload HTML coverage report
+      id: coverage_artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-html
+        path: coverage-html/
+
+    - name: Build the coverage report body
+      env:
+        ARTIFACT_URL: ${{ steps.coverage_artifact.outputs.artifact-url }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        {
+          echo "## Test coverage"
+          echo
+          echo '```'
+          grep -E '^(lines|functions|branches):' coverage-summary.txt
+          echo '```'
+          echo
+          echo "Measured on ubuntu-latest with gcc. Coverage numbers are"
+          echo "toolchain-specific, so this Linux figure is the canonical one for"
+          echo "comparing across pull requests."
+          echo
+          # artifact-url is empty if the upload was skipped or failed; fall
+          # back to the run, which lists whatever artifacts do exist.
+          if [ -n "$ARTIFACT_URL" ]; then
+            echo "Per-file breakdown: [coverage-html artifact]($ARTIFACT_URL)."
+          else
+            echo "Per-file breakdown: the coverage-html artifact on [this run]($RUN_URL)."
+          fi
+          echo "It is a zip -- GitHub does not serve artifact HTML directly, so"
+          echo "download it and open index.html."
+        } > coverage-report.md
+        cat coverage-report.md >> "$GITHUB_STEP_SUMMARY"
+
+    # A pull request from a fork is given a read-only token, so posting a
+    # comment is not possible there. Those runs still get the same report in
+    # the run summary written above.
+    - name: Comment the coverage report on the pull request
+      if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh pr comment "${{ github.event.pull_request.number }}" \
+           --body-file coverage-report.md --edit-last --create-if-none
+
+
+  # Builds the Doxygen API reference and, on master, publishes it to GitHub
+  # Pages at https://burr-tools.github.io/burr-tools/.
+  #
+  # Gated to pull requests and master, matching `coverage` above. That is not
+  # just symmetry: the `release` job downloads *every* artifact of the run into
+  # one directory and attaches `artifacts/**/*` to the release, so a pages
+  # artifact present on a tag run would end up as a release asset.
+  docs:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        # `just docs` stamps the docs with `git describe --tags`, which needs
+        # the tags and enough history to find the most recent one.
+        fetch-depth: 0
+
+    - name: Update package list
+      run: sudo apt-get update
+
+    - name: Install dependencies
+      run: sudo apt-get install -y doxygen graphviz
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Generate API documentation
+      run: just docs
+
+    - name: Upload the Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: gendoc/html
+
+
+  # Split from `docs` because deployment needs write access to Pages and an id
+  # token, and a pull request from a fork must not be handed either. Keeping the
+  # generation step in its own read-only job means forks still get their docs
+  # build checked; only this job, which never runs for a pull request, deploys.
+  deploy-docs:
+    needs: docs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      pages: write
+      id-token: write
+    # GitHub Pages accepts one deployment at a time. Queue rather than cancel,
+    # so a rapid second push to master cannot leave the site showing the older
+    # of the two commits.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
+
 
   build-windows:
     needs: version
@@ -116,7 +268,7 @@ jobs:
 
       - name: Build
         run: |
-          meson setup build-win --cross-file cross-mingw64.txt --buildtype=release
+          meson setup build-win --cross-file cross-mingw64.txt --buildtype=release --werror -Dpython=disabled
           meson compile -C build-win
           x86_64-w64-mingw32-strip build-win/burrtools.exe build-win/burrTxt.exe build-win/burrTxt2.exe
 
@@ -162,6 +314,9 @@ jobs:
             meson-macos-${{ hashFiles('subprojects/*.wrap') }}-
             meson-macos-
 
+      - name: Install just
+        uses: extractions/setup-just@v2
+
       - name: Build
         env:
           CC: ccache clang
@@ -173,12 +328,16 @@ jobs:
           strip -x build/burrtools build/burrTxt build/burrTxt2
           ccache -s || true
 
+      - name: Run tests
+        run: just test
+
       - name: Create macOS app bundle and DMG
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
+          ARCH="$(uname -m)"
           ./build_scripts/create-macos-bundle.sh "$VERSION"
-          test -f "BurrTools-${VERSION}.dmg"
+          test -f "BurrTools-${VERSION}-macos-${ARCH}.dmg"
 
       - name: Package macOS CLI tools
         env:
@@ -186,11 +345,14 @@ jobs:
         run: |
           ARCH=$(uname -m)
           STAGE=$(mktemp -d)
-          cp build/burrTxt build/burrTxt2 README.md COPYING "$STAGE/"
+          cp build/burrTxt "burrTxt-${VERSION}-macos-${ARCH}"
+          cp build/burrTxt2 "burrTxt2-${VERSION}-macos-${ARCH}"
+          cp README.md COPYING "$STAGE/"
+          cp "burrTxt-${VERSION}-macos-${ARCH}" "burrTxt2-${VERSION}-macos-${ARCH}" "$STAGE/"
           (cd "$STAGE" && zip -r "$GITHUB_WORKSPACE/burrtools-${VERSION}-macos-${ARCH}-cli.zip" .)
           rm -rf "$STAGE"
           mkdir -p artifacts
-          mv "BurrTools-${VERSION}.dmg" "burrtools-${VERSION}-macos-${ARCH}-cli.zip" artifacts/
+          mv "BurrTools-${VERSION}-macos-${ARCH}.dmg" "burrtools-${VERSION}-macos-${ARCH}-cli.zip" artifacts/
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

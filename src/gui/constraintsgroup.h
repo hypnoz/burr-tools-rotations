@@ -29,9 +29,9 @@ class ColorConstraintsEdit;
 
 class LConstraintsGroup_c : public Fl_Group, public layoutable_c {
 
-  Fl_Slider * Slider;
-  ColorConstraintsEdit * List;
-  int callbackReason;
+  Fl_Slider * Slider = nullptr;
+  ColorConstraintsEdit * List = nullptr;
+  int callbackReason = 0;
 
   public:
 
@@ -46,7 +46,7 @@ class LConstraintsGroup_c : public Fl_Group, public layoutable_c {
 
   virtual void getMinSize(int *width, int *height) const {
     *width = 30;
-    *height = 20;
+    *height = 80;
   }
 };
 

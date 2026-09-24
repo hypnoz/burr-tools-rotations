@@ -26,6 +26,8 @@
 
 #include "bt_assert.h"
 
+#include <memory>
+
 class assembler_c;
 class symmetries_c;
 class voxel_c;
@@ -78,7 +80,7 @@ class gridType_c {
      * instance here and just return a pointer to it for the application to
      * use
      */
-    mutable symmetries_c * sym;
+    mutable std::unique_ptr<symmetries_c> sym;
 
   public:
 
@@ -109,7 +111,7 @@ class gridType_c {
     unsigned int getCapabilities(void) const;
 
     /// return a movement cache instance for this grid type
-    movementCache_c * getMovementCache(const problem_c & puz) const;
+    std::unique_ptr<movementCache_c> getMovementCache(const problem_c & puz) const;
 
     /// create a new voxel space of this grid type with the given dimensions
     voxel_c * getVoxel(unsigned int x, unsigned int y, unsigned int z, voxel_type init) const;
@@ -140,13 +142,13 @@ class gridType_c {
      * because we are not dependent on the gridtype this function is static
      * but it needs to know the puzzle
      */
-    static assembler_c * findAssembler(const problem_c & p, bool quiet = false,
-                                       solverType_e solver = SOLVER_CLASSIC);
+    static std::unique_ptr<assembler_c> findAssembler(const problem_c & p, bool quiet = false,
+                                                      solverType_e solver = SOLVER_CLASSIC);
 
-  private:
+  public:
 
-    // no copying and assigning
-    void operator=(const gridType_c&);
+    // no assigning
+    gridType_c & operator=(const gridType_c &) = delete;
 };
 
 #endif

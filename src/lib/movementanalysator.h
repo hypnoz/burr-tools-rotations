@@ -24,7 +24,9 @@
 #include "solvertype.h"
 
 #include <atomic>
+#include <cstdint>
 #include <vector>
+#include <memory>
 
 class problem_c;
 class disassemblerNode_c;
@@ -47,24 +49,40 @@ class movementAnalysator_c {
 
   private:
 
+    std::unique_ptr<movementCache_c> cache;
+
     /* matrix should normally have one subarray for each direction
      * (positive x negative x, positive y, ...), but because
      * the matrix for the negative direction in the same direction is the
      * transposition (m[i][j] == m[j][i]) we save the calculation or copying
      * and rather do the transposition inside the checkmovement function
      */
-    unsigned int * matrix;
-    unsigned int * movement;
-    int * weights;
+    std::vector<unsigned int> matrix;
+    std::vector<unsigned int> movement;
+    std::vector<int> weights;
+    /* scratch buffer for checkmovement; a reused member rather than a local
+     * because checkmovement is on the hot path of the disassembler
+     */
+    std::vector<char> check;
     unsigned int piecenumber;
 
-    movementCache_c * cache;
+    /* Cached input/output of the previous prepare() call for the incremental
+     * fast path. prevSearch is refcounted (see prepare): the compared node
+     * stays alive to prevent ABA pointer aliasing. All state is per-instance,
+     * so multiple analysators can run concurrently without shared mutation. */
+    std::vector<unsigned int> prevFill;
+    disassemblerNode_c * prevSearch = nullptr;
+    const std::vector<unsigned int> * prevPieces = nullptr;
+    uint64_t prevPiecesHash = 0;
+    int prevN = 0;
+    /* reusable dirty bitsets for the incremental closure: [d * n + idx] */
+    std::vector<char> dirtyRows, dirtyCols;
 
-    countingNodeHash * nodes;
+    std::unique_ptr<countingNodeHash> nodes;
 
     bool checkRotations;
     bool bricksGrid;
-    rotationMoves_c * rotationMoves;
+    std::unique_ptr<rotationMoves_c> rotationMoves;
     bool rotationsActive;
     std::atomic<unsigned long long> rotationSearchUs;
     std::atomic<unsigned long long> linearSearchUs;
@@ -75,14 +93,21 @@ class movementAnalysator_c {
     /* these variables are used for the routine that looks
      * for the pieces to move find, checkmovement
      */
-    int nextpiece, next_pn, nextstate, nextpiece2, state99nextState;
-    unsigned int nextdir;
-    unsigned int maxstep, nextstep;
-    disassemblerNode_c * state99node;
-    disassemblerNode_c * searchnode;
-    const std::vector<unsigned int> * pieces;
+    int nextpiece = 0, next_pn = 0, nextstate = -1, state99nextState = 0;
+    unsigned int nextdir = 0;
+    unsigned int maxstep = static_cast<unsigned int>(-1), nextstep = 0;
+    disassemblerNode_c * state99node = nullptr;
+    disassemblerNode_c * searchnode = nullptr;
+    const std::vector<unsigned int> * pieces = nullptr;
 
     void prepare(void);
+    /* Query the movement cache for all pairwise piece movements */
+    void prepareFill(void);
+    /* Compute transitive closure of the movement matrix to fixpoint */
+    void closureFull(void);
+    /* Incremental update: reuse previous matrix, recompute pairs touching
+     * the moved pieces, and propagate relaxations via dirty worklist */
+    void prepareIncremental(const std::vector<unsigned int> & moved);
     void beginSearchPhase(bool linear);
     void switchToRotationPhase(void);
     void flushSearchPhase(void);
@@ -131,11 +156,32 @@ class movementAnalysator_c {
      */
     disassemblerNode_c * findMatching(disassemblerNode_c * nd, const std::vector<unsigned int> & pcs, unsigned int piece, int dx, int dy, int dz);
 
+    /**
+     * Instrumentation counters for the move search.
+     *
+     * Cumulative since construction or the last resetStats() call, across
+     * all uses (find/findMatching/completeFind). Behavior-neutral:
+     * nothing in the search reads these.
+     */
+    struct stats_s {
+      unsigned long checkCalls = 0;    ///< checkmovement() invocations
+      unsigned long checkSuccess = 0;  ///< ... that admitted a move
+      unsigned long nodesReturned = 0; ///< nodes handed out via find()
+    };
+
+    /** current instrumentation counters (see stats_s) */
+    const stats_s & getStats(void) const { return stats; }
+
+    /** zero all instrumentation counters */
+    void resetStats(void) { stats = stats_s(); }
+
   private:
 
+    stats_s stats;
+
     // no copying and assigning
-    movementAnalysator_c(const movementAnalysator_c&);
-    void operator=(const movementAnalysator_c&);
+    movementAnalysator_c(const movementAnalysator_c&) = delete;
+    movementAnalysator_c& operator=(const movementAnalysator_c&) = delete;
 
 };
 

@@ -24,14 +24,20 @@
 #include "assembler.h"
 #include "bt_classic_solver.h"
 
+#include <cstdint>
 #include <atomic>
 #include <vector>
 #include <set>
 #include <stack>
+#include <unordered_set>
+#include <mutex>
+#include <memory>
+#include <thread>
 
 class problem_c;
 class gridType_c;
 class mirrorInfo_c;
+class ISimdHuangCover;
 
 /**
  * This class is an assembler class.
@@ -74,7 +80,7 @@ private:
    * be zero
    */
   std::vector<unsigned int> holeColumns;
-  unsigned int holes;
+  unsigned int holes = 0;
 
   /* this function gets called whenever an assembly was found
    * when a callback is available it will call getAssembly to
@@ -87,14 +93,67 @@ private:
   void solution(void);
 
   /* used to abort the searching */
-  std::atomic<bool> abort;
+  std::atomic<bool> abbort;
 
   /* used to save if the search is running */
-  bool running;
+  std::atomic<bool> running{false};
+
+  struct SubtreeTask_1 {
+    std::vector<unsigned int> task_stack;
+    std::vector<unsigned int> next_row_stack;
+    std::vector<unsigned int> column_stack;
+    std::vector<unsigned int> rows;
+    std::vector<unsigned int> hidden_rows;
+  };
+
+  void generateTasksAtDepth(unsigned int cutoff_depth, std::vector<SubtreeTask_1> & tasks);
+  void generateSubtreeTasks(std::vector<SubtreeTask_1> & tasks, unsigned int targetTasks, unsigned int maxDepth);
+  void parallelMultiSearch(unsigned int workers);
+  bool canUseSimd(void) const;
+  void simdSearch(void);
+  std::unique_ptr<ISimdHuangCover> createSimdSolver(void) const;
+
+  friend class assemblerWorker_1;
+
+  std::vector<SubtreeTask_1> parallelTasks;
+  std::vector<uint8_t> taskCompleted;
+  std::unordered_set<uint64_t> emittedSignatures;
+
+  /* Pristine base matrix saved before search starts */
+  /* set when a parallel search stopped before finishing; such a position is
+   * saved as not resumable -- see assembler_1.cpp
+   */
+  bool parallelInterrupted = false;
+  /* set when simdSearch() ran to completion. */
+  bool simdCompleted = false;
+
+  std::vector<unsigned int> base_left;
+  std::vector<unsigned int> base_right;
+  std::vector<unsigned int> base_up;
+  std::vector<unsigned int> base_down;
+  std::vector<unsigned int> base_colCount;
+  std::vector<unsigned int> base_weight;
 
   std::vector<unsigned int> rows;
   std::vector<unsigned int> finished_a;
   std::vector<unsigned int> finished_b;
+
+  /* getFinished() (GUI thread) reads finished_a/finished_b while the worker
+   * mutates them. reserve() (see assemble) stops the buffer from moving, but a
+   * concurrent pop_back would shrink the size under the reader and expose the
+   * popped, now-unconstructed slot. This mutex serialises getFinished with the
+   * pop_backs so the reader only ever sees constructed elements; the far more
+   * frequent push_back / back()++ stay lock free (they only ever add or bump a
+   * value the reader can tolerate reading stale).
+   */
+  mutable std::mutex finishedMutex;
+
+  /* push/pop the progress stacks under finishedMutex so getFinished (GUI
+   * thread) never observes a size change while a slot is being constructed or
+   * destructed. back()++ stays lock free - it only bumps an existing value.
+   */
+  void pushFinished(unsigned int b);
+  void popFinished(void);
   std::vector<unsigned int> hidden_rows;  // rows that nodes to rows that are currently hidden
   // because there are several batched of rows that need hiding these batches are separated
   // by a zero because the header row will never get hidden...
@@ -102,7 +161,7 @@ private:
   std::vector<unsigned int>next_row_stack;
   std::vector<unsigned int>column_stack;
 
-  unsigned int headerNodes;  // number of nodes within the header
+  unsigned int headerNodes = 0;  // number of nodes within the header
 
   bool open_column_conditions_fulfillable(void);
   int find_best_unclosed_column(void);
@@ -140,14 +199,14 @@ private:
   int prepare(bool hasRange, unsigned int rangeMin, unsigned int rangeMax);
 
   /* internal error state */
-  errState errorsState;
-  int errorsParam;
+  errState errorsState = ERR_NONE;
+  int errorsParam = 0;
 
   /* now this isn't hard to guess, is it? */
-  unsigned int piecenumber;
+  unsigned int piecenumber = 0;
 
   /* the message object that gets called with the solutions as param */
-  assembler_cb * asm_bc;
+  assembler_cb * asm_bc = nullptr;
 
   /* this vector contains the placement (transformation and position) for
    * a piece in a row
@@ -168,20 +227,20 @@ private:
 
   /* the members for rotations rejection
    */
-  bool avoidTransformedAssemblies;
-  bool rotationFilterActive;
-  unsigned int avoidTransformedPivot;
-  mirrorInfo_c * avoidTransformedMirror;
+  bool avoidTransformedAssemblies = false;
+  bool rotationFilterActive = false;
+  unsigned int avoidTransformedPivot = 0;
+  std::unique_ptr<mirrorInfo_c> avoidTransformedMirror;
 
   /// set to true, when complete analysis is requested
-  bool complete;
+  bool complete = false;
 
   /* the variables for debugging assembling processes
    */
-  bool debug;         // debugging enabled
-  int debug_loops;    // how many loops to run ?
+  bool debug = false;         // debugging enabled
+  int debug_loops = 0;    // how many loops to run ?
 
-  unsigned long iterations;
+  std::atomic<unsigned long> iterations{0};  // single-writer counter, read cross-thread by getIterations
 
 protected:
 
@@ -245,9 +304,9 @@ protected:
    * rotations it should call this function. This will then add an additional check
    * for each found assembly
    */
-  void checkForTransformedAssemblies(unsigned int pivot, mirrorInfo_c * mir);
+  void checkForTransformedAssemblies(unsigned int pivot, std::unique_ptr<mirrorInfo_c> mir);
 
-  unsigned int reducePiece;
+  std::atomic<unsigned int> reducePiece;  // written by worker, read by GUI via getReducePiece
 
 public:
 
@@ -255,27 +314,28 @@ public:
   ~assembler_1_c(void);
 
   /* functions that are overloaded from assembler_c, for comments see there */
-  errState createMatrix(bool keepMirror, bool keepRotations, bool complete);
-  void applySolutionFilterFlags(bool keepMirror, bool keepRotations, bool complete);
-  void assemble(assembler_cb * callback);
-  int getErrorsParam(void) { return errorsParam; }
-  virtual float getFinished(void) const;
-  virtual void stop(void) { abort.store(true, std::memory_order_release); }
-  virtual bool stopped(void) const { return !running; }
-  virtual errState setPosition(const char * string, const char * version);
-  virtual void save(xmlWriter_c & xml) const;
-  virtual void reduce(void);
-  virtual unsigned int getReducePiece(void) const { return reducePiece; }
-  void debug_step(unsigned long num = 1);
-  assembly_c * getAssembly(void);
+  using assembler_c::assemble;
+  errState createMatrix(bool keepMirror, bool keepRotations, bool complete, bool strictColors = false) override;
+  void applySolutionFilterFlags(bool keepMirror, bool keepRotations, bool complete) override;
+  void assemble(assembler_cb * callback) override;
+  int getErrorsParam(void) override { return errorsParam; }
+  float getFinished(void) const override;
+  void stop(void) override { abbort.store(true, std::memory_order_relaxed); }
+  bool stopped(void) const override { return !running.load(std::memory_order_relaxed); }
+  errState setPosition(const char * string, const char * version) override;
+  void save(xmlWriter_c & xml) const override;
+  void reduce(void) override;
+  unsigned int getReducePiece(void) const override { return reducePiece; }
+  void debug_step(unsigned long num = 1) override;
+  std::unique_ptr<assembly_c> getAssembly(void) override;
 
   static bool canHandle(const problem_c & p);
 
   /* some more special information to find out possible piece placements */
-  bool getPiecePlacementSupported(void) const { return true; }
-  unsigned int getPiecePlacement(unsigned int node, int delta, unsigned int piece, unsigned char *tran, int *x, int *y, int *z) const;
-  unsigned int getPiecePlacementCount(unsigned int piece) const;
-  unsigned long getIterations(void) { return iterations; }
+  bool getPiecePlacementSupported(void) const override { return true; }
+  unsigned int getPiecePlacement(unsigned int node, int delta, unsigned int piece, unsigned char *tran, int *x, int *y, int *z) const override;
+  unsigned int getPiecePlacementCount(unsigned int piece) const override;
+  unsigned long getIterations(void) override { return iterations; }
 
 private:
 

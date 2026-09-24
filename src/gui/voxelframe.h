@@ -104,6 +104,17 @@ class voxelFrame_c : public Fl_Gl_Window {
     } drawingMode;
     void setDrawingMode(unsigned int nr, drawingMode mode);
 
+    /* how the shapes drawn in mode normal look, this applies to
+     * all shapes of the frame at once
+     */
+    typedef enum {
+      styleVoxel,      // each voxel painted with its own bevel lines
+      styleEdges,      // flat faces with black lines at the real shape edges
+      styleSTL         // the mesh the STL export produces: bevels and gaps between pieces
+    } renderStyle;
+    void setRenderStyle(renderStyle style);
+    renderStyle getRenderStyle(void) const { return curStyle; }
+
     /* only active in single mode
      * the marker has 2 parts, a white part that shows the complete z layer
      * and a black part that is only drawn between the given coordinates
@@ -139,6 +150,10 @@ class voxelFrame_c : public Fl_Gl_Window {
     // this value determines the scaling factor used to draw the cube.
     void setSize(double sz);
     double getSize(void) const { return size; }
+
+    /* near/far clip planes from content bounds rather than a blanket multiple
+     * of size. image_c::prepareOpenGlImagePart() must use the same values. */
+    void getNearFar(double * nearPlane, double * farPlane) const;
 
     void setCallback(VoxelViewCallbacks *c = 0) { cb = c; }
     bool pickShape(int x, int y, unsigned int *shape, unsigned long *voxel, unsigned int *face);
@@ -184,7 +199,7 @@ class voxelFrame_c : public Fl_Gl_Window {
       TranslateRoateScale,       // for showing pieces
       CenterTranslateRoateScale  // for showing disassembly
     } transformationType;
-    transformationType trans;
+    transformationType trans = ScaleRotateTranslate;
 
     void setCenter(float x, float y, float z) {
       centerX = x;
@@ -193,32 +208,35 @@ class voxelFrame_c : public Fl_Gl_Window {
       redraw();
     }
 
-    typedef struct {
+    struct shapeInfo {
 
-      float r, g, b, a;
-      const voxel_c * shape;
-      drawingMode mode;
-      float x, y, z, scale;
-      bool dim;
-      bool useChecker;
-      Polyhedron * poly;
-      GLuint list;  // the display list for this shape 0 means no list defined
+      float r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f;
+      const voxel_c * shape = nullptr;
+      drawingMode mode = normal;
+      float x = 0.0f, y = 0.0f, z = 0.0f, scale = 1.0f;
+      bool dim = false;
+      bool useChecker = false;
+      Polyhedron * poly = nullptr;
+      Polyhedron * pickPoly = nullptr;  // the flat mesh of the edge-line style, used to pick in the other styles
+      GLuint list = 0;  // the display list for this shape 0 means no list defined
 
       /* mid-tumble animation (angle==0 means inactive) */
       float animAngle;
       float animAxisX, animAxisY, animAxisZ;
       float animPivotX, animPivotY, animPivotZ;
 
-    } shapeInfo;
+    };
 
-    typedef struct {
-      float r, g, b;
-    } colorInfo;
+    struct colorInfo {
+      float r = 0.0f, g = 0.0f, b = 0.0f;
+    };
 
     std::vector<colorInfo> palette;
 
+    void drawShape(shapeInfo * shape);
+
     /* the marker position */
-    int mX1, mY1, mZ, mX2, mY2;
+    int mX1 = 0, mY1 = 0, mZ = 0, mX2 = 0, mY2 = 0;
     int markerType;
 
     rotater_c * rotater;
@@ -236,9 +254,11 @@ class voxelFrame_c : public Fl_Gl_Window {
 
     colorMode colors;
 
-    bool _showCoordinateSystem;
+    renderStyle curStyle;
 
-    float centerX, centerY, centerZ;
+    bool _showCoordinateSystem = false;
+
+    float centerX = 0.0f, centerY = 0.0f, centerZ = 0.0f;
 
     bool _useLightning;
 
@@ -248,7 +268,7 @@ class voxelFrame_c : public Fl_Gl_Window {
     std::vector<int> debugRestrictX, debugRestrictY, debugRestrictZ;
 
     // when picking shapes, this is the coordinate to use
-    int pickx, picky;
+    int pickx = -1, picky = -1;
 
     void draw();
     void resize(int x, int y, int w, int h);
@@ -257,6 +277,9 @@ class voxelFrame_c : public Fl_Gl_Window {
     void drawDebugRotationLegend();
     void clearDebugRotationCells();
     void updateDebugRotationCells(piecePositions_c *shifting);
+
+    // conservative bounding-sphere radius (from the origin) of everything in shapes
+    double computeContentRadius(void) const;
 
     bool insideVisible;
 };

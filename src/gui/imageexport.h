@@ -49,6 +49,8 @@
 #include "voxelframe.h"
 
 #include <vector>
+#include <memory>
+#include <string>
 
 class LView3dGroup;
 class LBlockListGroup;
@@ -62,6 +64,13 @@ class imageExport_c : public LFl_Double_Window, public VoxelViewCallbacks {
 
     /* the puzzle that is going to be exported */
     puzzle_c * puzzle;
+
+    /* the default output directory, offered in the path field */
+    std::string exportDir;
+
+    /* set when a page could not be written; aborts the export and is
+     * reported once. Empty means no failure. */
+    std::string failedPath;
 
     /* The different window elements */
     LView3dGroup *view3D;
@@ -86,11 +95,11 @@ class imageExport_c : public LFl_Double_Window, public VoxelViewCallbacks {
     /* this vector is set up at the beginning of an export with
      * all the images that need to be in the target image
      */
-    std::vector<ImageInfo*> images;
+    std::vector<std::unique_ptr<ImageInfo>> images;
 
     /* some internal variables for the image export */
     unsigned int state;        /* what is currently done, 0: preview, 1: export */
-    image_c *i;                  /* current page that is worked on */
+    std::unique_ptr<image_c> i;  /* current page that is worked on */
     unsigned int curWidth;     /* how much of the current line is filled */
     unsigned int curLine;      /* current line number */
     unsigned int curPage;      /* number of the current page */
@@ -105,7 +114,14 @@ class imageExport_c : public LFl_Double_Window, public VoxelViewCallbacks {
 
   public:
 
-    imageExport_c(puzzle_c * p);
+    /* puzzleFile is the path the current puzzle was loaded from, or empty
+     * when it has never been saved. It supplies the default output
+     * directory; without one the path field starts empty, which makes the
+     * output name relative — and an application launched from a macOS
+     * bundle has "/" for a working directory, which is read-only.
+     */
+    imageExport_c(puzzle_c * p, const std::string & puzzleFile);
+    ~imageExport_c(void);
 
     /* returns true, when there is currently a image export in progress */
     bool isWorking(void) { return working; }

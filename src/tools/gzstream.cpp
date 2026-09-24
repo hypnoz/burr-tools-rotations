@@ -154,16 +154,36 @@ void gzstreambase::close() {
 }
 
 
-std::istream * openGzFile(const char * name)
+std::unique_ptr<std::istream> openGzFile(const char * name)
 {
-  igzstream * gz = new igzstream(name);
+  auto gz = std::make_unique<igzstream>(name);
 
-  if (!gz)
+  // Do NOT ask gz->good()/gz->fail() here: gzstreambase's constructor
+  // correctly sets badbit when gzstreambuf::open() fails, but igzstream
+  // multiply-inherits gzstreambase and std::istream from the shared virtual
+  // base std::ios. Base initialisers run in declaration order, so after
+  // gzstreambase's constructor sets badbit, std::istream's own constructor
+  // runs init(&buf), which resets rdstate() to goodbit because the streambuf
+  // pointer is non-null -- silently wiping the badbit that was just set.
+  // Asking gzstreambuf directly whether it actually opened sidesteps that
+  // construction-order trap entirely.
+  if (!gz->rdbuf()->is_open())
   {
-    delete gz;
-    return new std::ifstream(name);
+    auto file = std::make_unique<std::ifstream>(name);
+    if (file->is_open())
+      return file;
+
+    // Neither zlib nor a plain read could open the file. Returning gz here
+    // would hand back a non-null stream that reads zero bytes, which a
+    // caller cannot tell apart from a file that is genuinely empty.
+    return nullptr;
   }
 
   return gz;
+}
+
+std::unique_ptr<std::istream> openGzFile(const std::filesystem::path & path)
+{
+  return openGzFile(path.string().c_str());
 }
 

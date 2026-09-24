@@ -28,6 +28,7 @@
 
 #include <stdio.h>
 #include <string>
+#include <vector>
 
 class xmlWriter_c;
 class xmlParser_c;
@@ -69,11 +70,10 @@ protected:
   unsigned int voxels;
 
   /**
-   * The space. It's dynamically allocated on construction
-   * and deleted on destruction. The position of a voxel
+   * The space. The position of a voxel
    * inside this 1-dimensional structure is \f$ x + sx*(y + sy*z) \f$
    */
-  voxel_type * space;
+  std::vector<voxel_type> space;
 
   /** \page BoundingBox Bounding Box
    *
@@ -156,7 +156,7 @@ protected:
    * the first 3 values are the hot spot position and the following 6 the
    * bounding box for the given transformation
    */
-  int * BbHsCache;
+  mutable std::vector<int> BbHsCache;
 
 protected:
 
@@ -367,7 +367,7 @@ public:
    * Set all the voxels to the given value
    */
   void setAll(voxel_type val) {
-    memset(space, val, voxels);
+    memset(space.data(), val, voxels);
     recalcBoundingBox();
     symmetries = symmetryInvalid();
   }
@@ -381,8 +381,25 @@ public:
   /**
    * this function transforms the given point by the given transformation
    * around the origin
+   *
+   * NOTE: on grids whose integer (x,y,z) coordinates are not a plain scaled
+   * copy of a Cartesian frame (currently GT_TRIANGULAR_PRISM), this is not
+   * actually linear: a parity-dependent offset is folded in as part of
+   * converting to and from the grid's own coordinate representation, so
+   * feeding it, say, unit basis vectors does not recover the transformation's
+   * geometric rotation/mirror. Callers that need that (e.g. to draw a rotation
+   * axis) should use getTransformMatrix() instead.
    */
   virtual void transformPoint(int * x, int * y, int * z, unsigned int trans) const = 0;
+
+  /**
+   * the 3x3 linear part of the given transformation - the actual geometric
+   * rotation or mirror it represents, in the grid's own natural orthonormal
+   * frame, decoupled from whatever affine quirks its integer coordinate
+   * representation has. Row-major: new_x = m[0]*x + m[1]*y + m[2]*z, etc.
+   * Always orthogonal (determinant +-1) for a valid trans.
+   */
+  virtual void getTransformMatrix(unsigned int trans, double m[9]) const = 0;
 
   /**
    * shift the space around. Voxels that go over the
@@ -714,21 +731,6 @@ public:
   virtual bool onGrid(int x, int y, int z) const = 0;
 
   /**
-   * this function returns a polyhedron mesh of this shape.
-   * The mesh is then further used for STL export and
-   * the displaying of this shape in the GUI
-   * The Polyhedron is allocated using new, so you have to
-   * delete it, when you no longer need it
-   *
-   */
-  virtual Polyhedron * getMesh(double bevel, double offset) const;
-
-  /* return true, when the given parameters will result in a usable
-   * polyhedron, when offset or bevel gets too big return false
-   */
-  virtual bool meshParamsValid(double /*bevel*/, double /*offset*/) const { return true; }
-
-  /**
    * returns the drawing mesh. ATTENTION for the sake of speed this mesh
    * will not be a proper halfedge mesh, most edges will be open, meaning
    * they don't have a pair, which is invalid and makes some
@@ -740,6 +742,20 @@ public:
    * returns the drawing mesh for wire-frame mode.
    */
   virtual Polyhedron * getWireframeMesh(void) const;
+
+  /**
+   * returns a mesh with flat faces and no bevel or offset. It is a proper
+   * halfedge mesh, so the drawing code can find the real edges of the shape
+   * (where 2 faces with different normals meet) and paint lines there
+   */
+  virtual Polyhedron * getFlatMesh(void) const;
+
+  /**
+   * returns a mesh that looks like what the STL export produces with
+   * default parameters: bevelled edges and an offset that results in
+   * a small gap between adjacent pieces of an assembly
+   */
+  virtual Polyhedron * getSTLMesh(void) const;
 
   /**
    * this function must return a polygon that is the connecting face to the neighbour n for the
@@ -761,10 +777,10 @@ protected:
 
   virtual Polyhedron * getMeshInternal(double bevel, double offset, bool fast) const;
 
-private:
+public:
 
-  // no copying and assigning
-  void operator=(const voxel_c&);
+  // no assigning
+  voxel_c & operator=(const voxel_c &) = delete;
 
 };
 

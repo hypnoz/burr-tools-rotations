@@ -30,6 +30,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -41,7 +42,7 @@ class assembly_c;
 class separation_c;
 
 struct disasmTask_c {
-  assembly_c * assembly;
+  std::unique_ptr<assembly_c> assembly;
   unsigned long assemblyNumber;
   unsigned long solutionNumber;
 };
@@ -116,8 +117,8 @@ class solveThread_c : public assembler_cb, public thread_c {
 
   private:
 
-    assembler_c::errState errState;
-    int errParam;
+    assembler_c::errState errState = assembler_c::ERR_NONE;
+    int errParam = 0;
 
   public:
 
@@ -132,7 +133,7 @@ class solveThread_c : public assembler_cb, public thread_c {
 
   private:
 
-    time_t startTime;
+    time_t startTime = 0;
 
   public:
 
@@ -177,6 +178,7 @@ class solveThread_c : public assembler_cb, public thread_c {
     static const int PAR_JUST_COUNT =         0x20;  // just count the solutions, don't save them
     static const int PAR_COMPLETE_ROTATIONS = 0x40;  // do a thorough rotation check
     static const int PAR_CHECK_ROTATIONS =    0x80;  // try 90° piece rotations during disassembly
+    static const int PAR_STRICT_COLORS =     0x100;  // piece colour must equal result colour
 
     // create all the necessary data structures to start the thread later on
     solveThread_c(problem_c & puz, int par);
@@ -201,7 +203,16 @@ class solveThread_c : public assembler_cb, public thread_c {
     void setSolverType(solverType_e type) { solverType = type; }
     solverType_e getSolverType(void) const { return solverType; }
 
+    /* If >= 0, the worker keeps the (limit-bounded) solution list sorted by
+     * this problem_c::sortSolutions method after every solution it adds, so a
+     * sort chosen in the GUI stays applied as new solutions arrive. -1 = off.
+     * Atomic: set from the GUI thread, read by the worker.
+     */
+    void setLiveSort(int method) { liveSort.store(method, std::memory_order_relaxed); }
+
   private:
+
+    std::atomic<int> liveSort;
 
     /* don't save more than this number of solutions 0 means no limit */
     unsigned int solutionLimit;
@@ -212,7 +223,7 @@ class solveThread_c : public assembler_cb, public thread_c {
     /* this is used to increase the drop with time, when the limit is reached
      * and only every 2nd valid solution is taken
      */
-    unsigned int dropMultiplicator;
+    unsigned int dropMultiplicator = 1;
 
   public:
 
@@ -233,12 +244,18 @@ class solveThread_c : public assembler_cb, public thread_c {
 
   private:
 
-    std::atomic<bool> stopPressed;
-    bool return_after_prep;  // sometimes it is useful to only prepare and return,
+    std::atomic<bool> stopPressed{false};  // set by the GUI thread, read by the worker
+    bool return_after_prep = false;  // sometimes it is useful to only prepare and return,
                              // if this flag is set, the program will return
 
-    std::vector<disassembler_c *> disassemblers;
-    assembler_c * assm;
+    std::vector<std::unique_ptr<disassembler_c>> disassemblers;
+
+    /* the worker publishes the assembler here once it is fully constructed so
+     * that currentActionParameter() and getStats(), called from the GUI thread,
+     * can query its progress. Atomic with release/acquire so the GUI never sees
+     * a half-constructed object (which would be a vptr race on the virtual call).
+     */
+    std::atomic<assembler_c *> assm;
     unsigned int assemblerThreadCount;
 
     std::mutex assemblyCallbackMutex;
@@ -272,12 +289,13 @@ class solveThread_c : public assembler_cb, public thread_c {
     void stopDisasmWorker(void);
     void cancelDisassemblyWork(void);
     void disasmWorkerRun(disassembler_c * workerDisassm);
-    void enqueueDisassembly(assembly_c * a);
+    void enqueueDisassembly(std::unique_ptr<assembly_c> a);
     void flushDisassemblyQueue(void);
-    void processDisassembly(const disasmTask_c & task, int solutionAction, disassembler_c * workerDisassm);
+    void processDisassembly(disasmTask_c & task, int solutionAction, disassembler_c * workerDisassm);
     unsigned int findInsertIndexByMoves(unsigned int lev) const;
     unsigned int findInsertIndexByRotations(unsigned int lev) const;
     void trimSavedSolutions(int solutionAction);
+    void applyLiveSort(void);
 
 public:
 
@@ -286,8 +304,11 @@ public:
 
 private:
 
+  // helper to stop without virtual dispatch in destructor
+  void stopInternal(void);
+
   // the call-back
-  bool assembly(assembly_c* a);
+  bool assembly(std::unique_ptr<assembly_c> a) override;
 
 public:
 
@@ -296,17 +317,22 @@ public:
   bool start(bool stop_after_prep = false);
 
   // try to stop the thread at the next possible position
-  void stop(void);
+  void stop(void) override;
 
+  /* true once the worker has left run() for good. ACT_ASSERT belongs here:
+   * an assert in the worker ends the thread just as surely as the other three,
+   * and a caller polling for the thread to finish would otherwise wait forever.
+   */
   bool stopped(void) const {
     unsigned int act = action.load(std::memory_order_relaxed);
     return ((act == ACT_PAUSING) ||
             (act == ACT_FINISHED) ||
-            (act == ACT_ERROR)
+            (act == ACT_ERROR) ||
+            (act == ACT_ASSERT)
            );
   }
 
-  void run(void);
+  void run(void) override;
 
 private:
 

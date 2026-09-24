@@ -22,6 +22,7 @@
 #define __IMAGES_H__
 
 #include <vector>
+#include <memory>
 
 #include <FL/Fl_Pixmap.H>
 
@@ -153,6 +154,10 @@ extern const char * ViewMode3D_xpm[];
 extern const char * ViewMode3DL_xpm[];
 extern const char * ViewModeInsides_xpm[];
 
+extern const char * RenderModeVoxel_xpm[];
+extern const char * RenderModeEdges_xpm[];
+extern const char * RenderModeSTL_xpm[];
+
 /* just a little cache to make sure the pixmaps are freed after usage
  *
  * usage is simple, put one instance of this class into your widget that
@@ -165,13 +170,13 @@ class pixmapList_c {
 
   private:
 
-    std::vector<Fl_Pixmap*> list;
+    std::vector<std::unique_ptr<Fl_Pixmap>> list;
 
   public:
 
-    pixmapList_c(void) {}
+    pixmapList_c(void) = default;
 
-    ~pixmapList_c(void);
+    ~pixmapList_c(void) = default;
 
     Fl_Pixmap * get(const char * data[]);
 };
